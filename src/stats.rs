@@ -131,11 +131,12 @@ pub fn exclude_cache_key(excludes: &[String]) -> String {
 pub fn variant_cache_key(
     excludes: &[String],
     include_org: bool,
+    include_private: bool,
     show_username: bool,
     minimal: bool,
 ) -> String {
     format!(
-        "{}|includeOrg={include_org}|showUsername={show_username}|minimal={minimal}",
+        "{}|includeOrg={include_org}|includePrivate={include_private}|showUsername={show_username}|minimal={minimal}",
         exclude_cache_key(excludes)
     )
 }

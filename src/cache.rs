@@ -29,6 +29,8 @@ pub struct CacheVariant {
 pub struct UserCache {
     pub raw_totals: HashMap<String, u64>,
     pub raw_totals_personal: HashMap<String, u64>,
+    pub raw_totals_public: HashMap<String, u64>,
+    pub raw_totals_personal_public: HashMap<String, u64>,
     pub last_updated: DateTime<Utc>,
     pub variants: HashMap<String, CacheVariant>,
 }
@@ -41,10 +43,12 @@ impl UserCache {
         let mut cache = Self {
             raw_totals: totals.with_org,
             raw_totals_personal: totals.personal_only,
+            raw_totals_public: totals.public_only,
+            raw_totals_personal_public: totals.personal_public_only,
             last_updated,
             variants: HashMap::new(),
         };
-        cache.render_variant("", &[], true, true, false)?;
+        cache.render_variant("", &[], true, true, true, false)?;
         Ok(cache)
     }
 
@@ -53,13 +57,27 @@ impl UserCache {
             > chrono::Duration::from_std(CACHE_TTL).unwrap_or_else(|_| chrono::Duration::zero())
     }
 
-    fn totals_for_scope(&self, include_org: bool) -> Result<HashMap<String, u64>> {
-        if include_org {
-            Ok(self.raw_totals.clone())
-        } else if self.raw_totals_personal.is_empty() {
-            anyhow::bail!("no personal repository language data found");
-        } else {
-            Ok(self.raw_totals_personal.clone())
+    fn totals_for_scope(&self, include_org: bool, include_private: bool) -> Result<HashMap<String, u64>> {
+        match (include_org, include_private) {
+            (true, true) => Ok(self.raw_totals.clone()),
+            (true, false) => {
+                if self.raw_totals_public.is_empty() {
+                    anyhow::bail!("no public repository language data found");
+                }
+                Ok(self.raw_totals_public.clone())
+            }
+            (false, true) => {
+                if self.raw_totals_personal.is_empty() {
+                    anyhow::bail!("no personal repository language data found");
+                }
+                Ok(self.raw_totals_personal.clone())
+            }
+            (false, false) => {
+                if self.raw_totals_personal_public.is_empty() {
+                    anyhow::bail!("no public personal repository language data found");
+                }
+                Ok(self.raw_totals_personal_public.clone())
+            }
         }
     }
 
@@ -67,10 +85,11 @@ impl UserCache {
         &self,
         excludes: &[String],
         include_org: bool,
+        include_private: bool,
         show_username: bool,
         minimal: bool,
     ) -> Option<&CacheVariant> {
-        let key = variant_cache_key(excludes, include_org, show_username, minimal);
+        let key = variant_cache_key(excludes, include_org, include_private, show_username, minimal);
         self.variants.get(&key)
     }
 
@@ -79,15 +98,16 @@ impl UserCache {
         username: &str,
         excludes: &[String],
         include_org: bool,
+        include_private: bool,
         show_username: bool,
         minimal: bool,
     ) -> Result<&CacheVariant> {
-        let key = variant_cache_key(excludes, include_org, show_username, minimal);
+        let key = variant_cache_key(excludes, include_org, include_private, show_username, minimal);
         if self.variants.contains_key(&key) {
             return Ok(self.variants.get(&key).expect("variant just checked"));
         }
 
-        let filtered = apply_excludes(self.totals_for_scope(include_org)?, excludes)?;
+        let filtered = apply_excludes(self.totals_for_scope(include_org, include_private)?, excludes)?;
         let stats = aggregate_top_six(filtered)?;
         let image_svg = if minimal {
             chart::render_minimal_language_card(&stats)?
@@ -144,11 +164,13 @@ impl AppCache {
         username: &str,
         excludes: &[String],
         include_org: bool,
+        include_private: bool,
         show_username: bool,
         minimal: bool,
     ) -> Result<CacheVariant> {
         let user_key = Self::cache_key(username);
-        let variant_key = variant_cache_key(excludes, include_org, show_username, minimal);
+        let variant_key =
+            variant_cache_key(excludes, include_org, include_private, show_username, minimal);
 
         {
             let user = self
@@ -160,7 +182,14 @@ impl AppCache {
                 return Ok(variant.clone());
             }
 
-            user.render_variant(username, excludes, include_org, show_username, minimal)?;
+            user.render_variant(
+                username,
+                excludes,
+                include_org,
+                include_private,
+                show_username,
+                minimal,
+            )?;
         }
 
         self.register_image(&user_key, &variant_key);
@@ -222,6 +251,8 @@ mod tests {
         UserCache {
             raw_totals: HashMap::new(),
             raw_totals_personal: HashMap::new(),
+            raw_totals_public: HashMap::new(),
+            raw_totals_personal_public: HashMap::new(),
             last_updated: Utc::now(),
             variants: variant_keys
                 .iter()

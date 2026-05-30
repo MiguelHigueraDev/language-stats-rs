@@ -11,6 +11,8 @@ pub struct LanguagesQuery {
     pub exclude: Vec<String>,
     #[serde(default = "default_include_org", rename = "includeOrg")]
     pub include_org: bool,
+    #[serde(default = "default_include_private", rename = "includePrivate")]
+    pub include_private: bool,
     #[serde(default = "default_show_username", rename = "showUsername")]
     pub show_username: bool,
     #[serde(default)]
@@ -20,6 +22,10 @@ pub struct LanguagesQuery {
 }
 
 fn default_include_org() -> bool {
+    true
+}
+
+fn default_include_private() -> bool {
     true
 }
 

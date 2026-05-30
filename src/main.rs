@@ -109,6 +109,7 @@ async fn get_languages(
         username,
         &excludes,
         query.include_org,
+        query.include_private,
         query.show_username,
         query.minimal,
     ) {
@@ -119,6 +120,7 @@ async fn get_languages(
                 user = %username,
                 exclude = ?excludes,
                 include_org = query.include_org,
+                include_private = query.include_private,
                 show_username = query.show_username,
                 minimal = query.minimal,
                 "failed to render language chart"
@@ -168,14 +170,19 @@ fn resolve_variant(
     username: &str,
     excludes: &[String],
     include_org: bool,
+    include_private: bool,
     show_username: bool,
     minimal: bool,
 ) -> Result<CacheVariant> {
     if let Ok(guard) = cache.read() {
         if let Some(user_cache) = guard.get_user(username) {
-            if let Some(variant) =
-                user_cache.get_variant(excludes, include_org, show_username, minimal)
-            {
+            if let Some(variant) = user_cache.get_variant(
+                excludes,
+                include_org,
+                include_private,
+                show_username,
+                minimal,
+            ) {
                 return Ok(variant.clone());
             }
         }
@@ -186,11 +193,23 @@ fn resolve_variant(
         .map_err(|_| anyhow::anyhow!("cache unavailable"))?;
 
     if let Some(variant) = guard.get_user(username).and_then(|user_cache| {
-        user_cache.get_variant(excludes, include_org, show_username, minimal)
+        user_cache.get_variant(
+            excludes,
+            include_org,
+            include_private,
+            show_username,
+            minimal,
+        )
     }) {
         return Ok(variant.clone());
     }
 
-    Ok(guard
-        .render_user_variant(username, excludes, include_org, show_username, minimal)?)
+    Ok(guard.render_user_variant(
+        username,
+        excludes,
+        include_org,
+        include_private,
+        show_username,
+        minimal,
+    )?)
 }

@@ -85,6 +85,11 @@ impl GithubClient {
             log_language_stats("all languages (personal only)", &personal_stats);
         }
 
+        if !totals.public_only.is_empty() && totals.public_only != totals.with_org {
+            let public_stats = language_stats_from_map(&totals.public_only);
+            log_language_stats("all languages (public only)", &public_stats);
+        }
+
         Ok(totals)
     }
 
@@ -158,15 +163,18 @@ impl GithubClient {
     ) -> Result<LanguageTotals> {
         let mut with_org: HashMap<String, u64> = HashMap::new();
         let mut personal_only: HashMap<String, u64> = HashMap::new();
+        let mut public_only: HashMap<String, u64> = HashMap::new();
+        let mut personal_public_only: HashMap<String, u64> = HashMap::new();
 
         let results: Vec<_> = stream::iter(repos.iter().cloned())
             .map(|repo| async move {
                 let owner = repo.owner.login.clone();
                 let name = repo.name.clone();
                 let is_personal = owner.eq_ignore_ascii_case(username);
+                let is_public = !repo.private;
                 match self.fetch_repo_languages(&owner, &name).await {
                     Ok(map) if map.is_empty() => None,
-                    Ok(map) => Some((is_personal, map)),
+                    Ok(map) => Some((is_personal, is_public, map)),
                     Err(err) => {
                         tracing::warn!(
                             repo = %format!("{owner}/{name}"),
@@ -182,11 +190,17 @@ impl GithubClient {
             .await;
 
         for item in results.into_iter().flatten() {
-            let (is_personal, languages) = item;
+            let (is_personal, is_public, languages) = item;
             for (lang, bytes) in languages {
                 *with_org.entry(lang.clone()).or_default() += bytes;
                 if is_personal {
-                    *personal_only.entry(lang).or_default() += bytes;
+                    *personal_only.entry(lang.clone()).or_default() += bytes;
+                }
+                if is_public {
+                    *public_only.entry(lang.clone()).or_default() += bytes;
+                    if is_personal {
+                        *personal_public_only.entry(lang).or_default() += bytes;
+                    }
                 }
             }
         }
@@ -198,6 +212,8 @@ impl GithubClient {
         Ok(LanguageTotals {
             with_org,
             personal_only,
+            public_only,
+            personal_public_only,
         })
     }
 

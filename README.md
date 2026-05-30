@@ -44,6 +44,7 @@ All options apply to `GET /languages`:
 | `username` | `GITHUB_USERNAME` | GitHub user whose repository languages are visualized. When this differs from `GITHUB_USERNAME`, or when no `GITHUB_TOKEN` is configured, only public repositories are included. |
 | `exclude` | _(none)_ | Languages to omit from the chart. Comma-separated in one param, or repeated params. Matching is case-insensitive. |
 | `includeOrg` | `true` | When `true`, include organization repositories. When `false`, use personal repositories only. |
+| `includePrivate` | `true` | When `true`, include private repositories (requires `GITHUB_TOKEN` and `username` matching `GITHUB_USERNAME`). When `false`, use public repositories only. |
 | `showUsername` | `true` | When `true`, show `@username` in the full chart header. Ignored when `minimal=true`. |
 | `minimal` | `false` | When `true`, render a compact 300px-wide badge instead of the full 1200×630 card. |
 
@@ -74,6 +75,9 @@ curl 'http://localhost:3000/languages?showUsername=false' --output languages.svg
 
 # Personal repos only
 curl 'http://localhost:3000/languages?includeOrg=false' --output languages.svg
+
+# Public repos only (excludes private repos when token is configured)
+curl 'http://localhost:3000/languages?includePrivate=false' --output languages.svg
 
 # Compact badge
 curl 'http://localhost:3000/languages?minimal=true' --output languages.svg
