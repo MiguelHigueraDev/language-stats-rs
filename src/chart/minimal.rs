@@ -43,13 +43,11 @@ pub fn render_minimal_language_card(stats: &[LanguageStat]) -> Result<Vec<u8>> {
     let mut svg = String::with_capacity(4096);
     svg.push_str(&svg::svg_open(WIDTH, height as u32, &clip_defs));
     svg.push_str(&format!(
-        r#"<rect width="{WIDTH}" height="{height}" fill="{bg}"/>
-<text x="{bar_x}" y="{title_y}" font-family="Roboto" font-size="{TITLE_SIZE}" font-weight="600" fill="{title_fill}">Most Used Languages</text>
+        r#"<text x="{bar_x}" y="{title_y}" font-family="Roboto" font-size="{TITLE_SIZE}" font-weight="600" fill="{title_fill}">Most Used Languages</text>
 <rect x="{bar_x}" y="{bar_y}" width="{bar_width}" height="{BAR_HEIGHT}" rx="{BAR_RADIUS}" fill="{track}"/>
 <g clip-path="url(#minimal-bar-clip)">
 "#,
         title_y = PADDING + TITLE_SIZE - 2,
-        bg = colors::background(),
         title_fill = colors::text_primary(),
         track = colors::bar_track(),
     ));

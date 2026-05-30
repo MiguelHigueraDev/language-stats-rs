@@ -37,11 +37,8 @@ pub fn render_language_card(
     let mut svg = String::with_capacity(svg::roboto_capacity_hint() + 8192);
     svg.push_str(&svg::svg_open(WIDTH, HEIGHT, ""));
     svg.push_str(&format!(
-        r#"<rect width="{WIDTH}" height="{HEIGHT}" fill="{bg}"/>
-<rect x="{card_x0}" y="{card_y0}" width="{card_width}" height="{card_height}" rx="{CARD_RADIUS}" ry="{CARD_RADIUS}" fill="{card}" stroke="{border}" stroke-width="1"/>
+        r#"<rect x="{card_x0}" y="{card_y0}" width="{card_width}" height="{card_height}" rx="{CARD_RADIUS}" ry="{CARD_RADIUS}" fill="none" stroke="{border}" stroke-width="1"/>
 "#,
-        bg = colors::background(),
-        card = colors::card(),
         border = colors::card_border(),
     ));
 
@@ -167,16 +164,14 @@ fn donut_chart_svg(
             if sweep >= 2.0 * PI - 0.02 {
                 out.push_str(&format!(
                     r#"<circle cx="{cx}" cy="{cy}" r="{outer}" fill="{color}"/>
-<circle cx="{cx}" cy="{cy}" r="{inner}" fill="{card}"/>
-"#,
-                    card = colors::card(),
+<circle cx="{cx}" cy="{cy}" r="{inner}" fill="none"/>
+"#
                 ));
             } else {
                 out.push_str(&format!(
-                    r#"<path d="{path}" fill="{color}" stroke="{card}" stroke-width="2" stroke-linejoin="round"/>
+                    r#"<path d="{path}" fill="{color}" stroke="none"/>
 "#,
                     path = donut_slice_path(cx, cy, outer, inner, slice_start, slice_end),
-                    card = colors::card(),
                 ));
             }
         }
