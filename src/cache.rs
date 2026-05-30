@@ -37,7 +37,7 @@ impl AppCache {
             last_updated,
             variants: HashMap::new(),
         };
-        cache.render_variant(&[], true, true)?;
+        cache.render_variant(&[], true, true, false)?;
         Ok(cache)
     }
 
@@ -56,8 +56,9 @@ impl AppCache {
         excludes: &[String],
         show_org: bool,
         show_username: bool,
+        minimal: bool,
     ) -> Option<&CacheVariant> {
-        let key = variant_cache_key(excludes, show_org, show_username);
+        let key = variant_cache_key(excludes, show_org, show_username, minimal);
         self.variants.get(&key)
     }
 
@@ -66,15 +67,20 @@ impl AppCache {
         excludes: &[String],
         show_org: bool,
         show_username: bool,
+        minimal: bool,
     ) -> Result<&CacheVariant> {
-        let key = variant_cache_key(excludes, show_org, show_username);
+        let key = variant_cache_key(excludes, show_org, show_username, minimal);
         if self.variants.contains_key(&key) {
             return Ok(self.variants.get(&key).expect("variant just checked"));
         }
 
         let filtered = apply_excludes(self.totals_for_scope(show_org)?, excludes)?;
         let stats = aggregate_top_six(filtered)?;
-        let image_svg = chart::render_language_card(&self.username, &stats, show_username)?;
+        let image_svg = if minimal {
+            chart::render_minimal_language_card(&stats)?
+        } else {
+            chart::render_language_card(&self.username, &stats, show_username)?
+        };
         let etag = compute_etag(&image_svg, self.last_updated, &key);
         self.variants.insert(
             key.clone(),

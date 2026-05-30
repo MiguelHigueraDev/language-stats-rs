@@ -1,7 +1,7 @@
+use crate::chart::svg;
 use crate::colors;
 use crate::models::LanguageStat;
 use anyhow::Result;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use std::f32::consts::PI;
 
 const WIDTH: u32 = 1200;
@@ -22,8 +22,6 @@ const SWATCH_SIZE: i32 = 12;
 const HEADER_GAP: i32 = 12;
 const SLICE_GAP: f32 = 0.012;
 
-const ROBOTO_TTF: &[u8] = include_bytes!("../assets/Roboto-Regular.ttf");
-
 pub fn render_language_card(
     username: &str,
     stats: &[LanguageStat],
@@ -36,22 +34,12 @@ pub fn render_language_card(
     let card_width = card_x1 - card_x0;
     let card_height = card_y1 - card_y0;
 
-    let font_base64 = STANDARD.encode(ROBOTO_TTF);
-
-    let mut svg = String::with_capacity(ROBOTO_TTF.len() * 4 / 3 + 8192);
+    let mut svg = String::with_capacity(svg::roboto_capacity_hint() + 8192);
+    svg.push_str(&svg::svg_open(WIDTH, HEIGHT, ""));
     svg.push_str(&format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}">
-<defs>
-<style>
-@font-face {{
-  font-family: 'Roboto';
-  src: url('data:font/ttf;base64,{font_base64}') format('truetype');
-}}
-</style>
-</defs>
-<rect width="{WIDTH}" height="{HEIGHT}" fill="{bg}"/>
+        r#"<rect width="{WIDTH}" height="{HEIGHT}" fill="{bg}"/>
 <rect x="{card_x0}" y="{card_y0}" width="{card_width}" height="{card_height}" rx="{CARD_RADIUS}" ry="{CARD_RADIUS}" fill="{card}" stroke="{border}" stroke-width="1"/>
-"##,
+"#,
         bg = colors::background(),
         card = colors::card(),
         border = colors::card_border(),
@@ -66,7 +54,7 @@ pub fn render_language_card(
 "#,
             x = card_x0 + INNER_PADDING,
             fill = colors::text_primary(),
-            text = escape_xml(&format!("@{username}")),
+            text = svg::escape_xml(&format!("@{username}")),
         ));
         header_bottom += 34 + HEADER_GAP;
     }
@@ -123,7 +111,7 @@ pub fn render_language_card(
             nx = bars_x + SWATCH_SIZE + 12,
             ny = row_center + 7,
             text = colors::text_primary(),
-            name = escape_xml(&stat.name),
+            name = svg::escape_xml(&stat.name),
         ));
 
         let bar_y = row_center - BAR_HEIGHT / 2;
@@ -147,7 +135,7 @@ pub fn render_language_card(
 "#,
             py = row_center + 6,
             fill = colors::text_muted(),
-            pct = escape_xml(&pct_label),
+            pct = svg::escape_xml(&pct_label),
         ));
     }
 
@@ -220,12 +208,4 @@ fn donut_slice_path(
     format!(
         "M {x1o:.2} {y1o:.2} A {outer} {outer} 0 {large_arc} 1 {x2o:.2} {y2o:.2} L {x1i:.2} {y1i:.2} A {inner} {inner} 0 {large_arc} 0 {x2i:.2} {y2i:.2} Z",
     )
-}
-
-fn escape_xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
 }

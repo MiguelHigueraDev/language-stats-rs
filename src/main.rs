@@ -3,16 +3,18 @@ mod chart;
 mod colors;
 mod github;
 mod models;
+mod query;
 mod refresh;
 mod stats;
 
 use crate::cache::{CacheVariant, SharedCache};
 use crate::github::GithubClient;
-use crate::stats::{deserialize_exclude_list, parse_excludes_from_params};
+use crate::query::LanguagesQuery;
+use crate::stats::parse_excludes_from_params;
 use anyhow::{Context, Result};
 use axum::{
     Router,
-    extract::{Query, State},
+    extract::State,
     http::{
         HeaderMap, HeaderValue, StatusCode,
         header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, IF_NONE_MATCH, LAST_MODIFIED},
@@ -20,29 +22,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use serde::Deserialize;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use tracing_subscriber::EnvFilter;
-
-#[derive(Debug, Deserialize)]
-struct LanguagesQuery {
-    #[serde(default, deserialize_with = "deserialize_exclude_list")]
-    exclude: Vec<String>,
-    #[serde(default = "default_show_org", rename = "showOrg")]
-    show_org: bool,
-    #[serde(default = "default_show_username", rename = "showUsername")]
-    show_username: bool,
-}
-
-fn default_show_org() -> bool {
-    true
-}
-
-fn default_show_username() -> bool {
-    true
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -94,12 +77,18 @@ async fn main() -> Result<()> {
 
 async fn get_languages(
     State(cache): State<SharedCache>,
-    Query(query): Query<LanguagesQuery>,
+    query: LanguagesQuery,
     headers: HeaderMap,
 ) -> Response {
     let excludes = parse_excludes_from_params(&query.exclude);
 
-    let variant = match resolve_variant(&cache, &excludes, query.show_org, query.show_username) {
+    let variant = match resolve_variant(
+        &cache,
+        &excludes,
+        query.show_org,
+        query.show_username,
+        query.minimal,
+    ) {
         Ok(variant) => variant,
         Err(err) => {
             tracing::warn!(
@@ -107,6 +96,7 @@ async fn get_languages(
                 exclude = ?excludes,
                 show_org = query.show_org,
                 show_username = query.show_username,
+                minimal = query.minimal,
                 "failed to render language chart"
             );
             return (StatusCode::BAD_REQUEST, err.to_string()).into_response();
@@ -151,9 +141,10 @@ fn resolve_variant(
     excludes: &[String],
     show_org: bool,
     show_username: bool,
+    minimal: bool,
 ) -> Result<CacheVariant> {
     if let Ok(guard) = cache.read() {
-        if let Some(variant) = guard.get_variant(excludes, show_org, show_username) {
+        if let Some(variant) = guard.get_variant(excludes, show_org, show_username, minimal) {
             return Ok(variant.clone());
         }
     }
@@ -162,11 +153,11 @@ fn resolve_variant(
         .write()
         .map_err(|_| anyhow::anyhow!("cache unavailable"))?;
 
-    if let Some(variant) = guard.get_variant(excludes, show_org, show_username) {
+    if let Some(variant) = guard.get_variant(excludes, show_org, show_username, minimal) {
         return Ok(variant.clone());
     }
 
     Ok(guard
-        .render_variant(excludes, show_org, show_username)?
+        .render_variant(excludes, show_org, show_username, minimal)?
         .clone())
 }
