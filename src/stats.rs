@@ -161,13 +161,8 @@ pub fn aggregate_top_six(totals: HashMap<String, u64>) -> Result<Vec<LanguageSta
     let mut entries: Vec<(String, u64)> = totals.into_iter().collect();
     entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-    let top: Vec<(String, u64)> = entries.iter().take(6).cloned().collect();
-    let other_bytes: u64 = entries.iter().skip(6).map(|(_, b)| b).sum();
-
-    let mut partial: HashMap<String, u64> = top.into_iter().collect();
-    if other_bytes > 0 {
-        partial.insert("Other".to_string(), other_bytes);
-    }
+    let top: Vec<(String, u64)> = entries.into_iter().take(6).collect();
+    let partial: HashMap<String, u64> = top.into_iter().collect();
 
     Ok(language_stats_from_map(&partial))
 }
@@ -252,6 +247,27 @@ mod tests {
         let filtered = apply_excludes(totals, &["C#".into()]).unwrap();
         assert!(!filtered.contains_key("C#"));
         assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn aggregate_top_six_omits_other_bucket() {
+        let totals = HashMap::from([
+            ("A".to_string(), 100),
+            ("B".to_string(), 90),
+            ("C".to_string(), 80),
+            ("D".to_string(), 70),
+            ("E".to_string(), 60),
+            ("F".to_string(), 50),
+            ("G".to_string(), 40),
+            ("H".to_string(), 30),
+        ]);
+        let stats = aggregate_top_six(totals).unwrap();
+        assert_eq!(stats.len(), 6);
+        assert!(stats.iter().all(|s| s.name != "Other"));
+        assert!(stats.iter().any(|s| s.name == "A"));
+        assert!(!stats.iter().any(|s| s.name == "G" || s.name == "H"));
+        let pct_sum: f64 = stats.iter().map(|s| s.percentage).sum();
+        assert!((pct_sum - 100.0).abs() < 0.01);
     }
 
     #[test]

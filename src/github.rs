@@ -78,7 +78,7 @@ impl GithubClient {
         let all_stats = language_stats_from_map(&totals);
         log_language_stats("all languages", &all_stats);
         let chart_stats = aggregate_top_six(totals.clone())?;
-        log_language_stats("chart (top 6 + other)", &chart_stats);
+        log_language_stats("chart (top 6)", &chart_stats);
         Ok(totals)
     }
 
