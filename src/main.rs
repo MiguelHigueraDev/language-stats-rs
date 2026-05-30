@@ -185,16 +185,12 @@ fn resolve_variant(
         .write()
         .map_err(|_| anyhow::anyhow!("cache unavailable"))?;
 
-    let user_cache = guard
-        .users
-        .get_mut(&cache::AppCache::cache_key(username))
-        .ok_or_else(|| anyhow::anyhow!("no cached data for user {username}"))?;
-
-    if let Some(variant) = user_cache.get_variant(excludes, show_org, show_username, minimal) {
+    if let Some(variant) = guard.get_user(username).and_then(|user_cache| {
+        user_cache.get_variant(excludes, show_org, show_username, minimal)
+    }) {
         return Ok(variant.clone());
     }
 
-    Ok(user_cache
-        .render_variant(username, excludes, show_org, show_username, minimal)?
-        .clone())
+    Ok(guard
+        .render_user_variant(username, excludes, show_org, show_username, minimal)?)
 }
