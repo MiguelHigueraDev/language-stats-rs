@@ -9,14 +9,27 @@ fn normalize_language_name(name: &str) -> String {
     name.trim().to_lowercase()
 }
 
+/// Whether a token is a multi-word GitHub language name (e.g. "Jupyter Notebook").
+fn is_multi_word_language_name(token: &str) -> bool {
+    let words: Vec<&str> = token.trim().split_whitespace().collect();
+    words.len() > 1 && words.iter().all(|word| word.len() > 1)
+}
+
 /// Decode one exclude token from the query string.
 ///
 /// Query strings decode `+` as space, so `?exclude=C++` arrives as `"C  "`.
-/// GitHub language names never contain spaces, so spaces are treated as `+`.
+/// For those tokens, spaces are treated as `+`. Multi-word GitHub names such as
+/// "Jupyter Notebook" keep their spaces.
 /// A single leading/trailing `+` (from outer whitespace padding) is stripped.
 fn decode_exclude_token(token: &str) -> String {
+    let trimmed = token.trim();
+    if is_multi_word_language_name(trimmed) {
+        return trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+    }
+
+    // Replace before trim: trailing spaces in `"C  "` stand in for `++`.
     let mut decoded = token.replace(' ', "+");
-    decoded = decoded.trim_start_matches('+').to_string();
+    decoded = decoded.trim().trim_start_matches('+').to_string();
     if decoded.ends_with('+') {
         let body = &decoded[..decoded.len() - 1];
         if !body.contains('+') {
@@ -24,6 +37,16 @@ fn decode_exclude_token(token: &str) -> String {
         }
     }
     decoded
+}
+
+/// Canonical form for an exclude token used in matching and cache keys.
+fn canonical_exclude_name(name: &str) -> String {
+    normalize_language_name(&decode_exclude_token(name))
+}
+
+/// Whether an exclude token should filter out a language from the totals.
+fn language_is_excluded(exclude: &str, lang: &str) -> bool {
+    canonical_exclude_name(exclude) == normalize_language_name(lang)
 }
 
 pub fn parse_excludes(exclude_param: Option<&str>) -> Vec<String> {
@@ -98,7 +121,7 @@ where
 pub fn exclude_cache_key(excludes: &[String]) -> String {
     let mut names: Vec<String> = excludes
         .iter()
-        .map(|name| normalize_language_name(&decode_exclude_token(name)))
+        .map(|name| canonical_exclude_name(name))
         .filter(|name| !name.is_empty())
         .collect();
     names.sort();
@@ -113,19 +136,18 @@ pub fn apply_excludes(
     totals: HashMap<String, u64>,
     excludes: &[String],
 ) -> Result<HashMap<String, u64>> {
-    let exclude_normalized: Vec<String> = excludes
+    let excludes: Vec<&String> = excludes
         .iter()
-        .map(|name| normalize_language_name(&decode_exclude_token(name)))
-        .filter(|name| !name.is_empty())
+        .filter(|name| !name.trim().is_empty())
         .collect();
 
-    if exclude_normalized.is_empty() {
+    if excludes.is_empty() {
         return Ok(totals);
     }
 
     let filtered: HashMap<String, u64> = totals
         .into_iter()
-        .filter(|(lang, _)| !exclude_normalized.contains(&normalize_language_name(lang)))
+        .filter(|(lang, _)| !excludes.iter().any(|exclude| language_is_excluded(exclude, lang)))
         .collect();
 
     if filtered.is_empty() {
@@ -251,6 +273,26 @@ mod tests {
         let filtered = apply_excludes(totals, &["C#".into()]).unwrap();
         assert!(!filtered.contains_key("C#"));
         assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn apply_excludes_handles_multi_word_language_names() {
+        let totals = HashMap::from([
+            ("TypeScript".to_string(), 100),
+            ("Jupyter Notebook".to_string(), 30),
+        ]);
+        let filtered = apply_excludes(totals, &["Jupyter Notebook".into()]).unwrap();
+        assert!(!filtered.contains_key("Jupyter Notebook"));
+        assert!(filtered.contains_key("TypeScript"));
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn parse_excludes_preserves_spaces_in_multi_word_names() {
+        assert_eq!(
+            parse_excludes(Some("HTML,Jupyter Notebook")),
+            vec!["HTML", "Jupyter Notebook"]
+        );
     }
 
     #[test]
