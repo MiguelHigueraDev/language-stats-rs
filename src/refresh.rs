@@ -1,13 +1,11 @@
 use crate::cache::SharedCache;
-use crate::chart;
 use crate::github::GithubClient;
-use crate::models::LanguageSnapshot;
 use anyhow::Result;
 use std::time::Duration;
 
 pub async fn initial_refresh(cache: &SharedCache, client: &GithubClient) -> Result<()> {
-    let snapshot = build_snapshot(client).await?;
-    *cache.write().expect("cache lock poisoned") = crate::cache::AppCache::from_snapshot(snapshot);
+    let snapshot = build_cache(client).await?;
+    *cache.write().expect("cache lock poisoned") = snapshot;
     Ok(())
 }
 
@@ -24,24 +22,23 @@ pub async fn run_refresh_loop(cache: SharedCache, client: GithubClient) {
 }
 
 async fn refresh_once(cache: &SharedCache, client: &GithubClient) -> Result<()> {
-    let snapshot = build_snapshot(client).await?;
+    let snapshot = build_cache(client).await?;
     tracing::info!(
-        languages = snapshot.stats.len(),
-        image_bytes = snapshot.image_png.len(),
+        languages = snapshot.raw_totals.len(),
+        cached_variants = snapshot.variants.len(),
         updated = %snapshot.last_updated,
         "cache refreshed successfully"
     );
-    *cache.write().expect("cache lock poisoned") = crate::cache::AppCache::from_snapshot(snapshot);
+    *cache.write().expect("cache lock poisoned") = snapshot;
     Ok(())
 }
 
-async fn build_snapshot(client: &GithubClient) -> Result<LanguageSnapshot> {
-    let stats = client.fetch_language_stats().await?;
-    let image_png = chart::render_language_card(client.username(), &stats)?;
+async fn build_cache(client: &GithubClient) -> Result<crate::cache::AppCache> {
+    let raw_totals = client.fetch_language_totals().await?;
     let last_updated = chrono::Utc::now();
-    Ok(LanguageSnapshot {
-        stats,
-        image_png,
+    crate::cache::AppCache::from_refresh(
+        raw_totals,
+        client.username().to_string(),
         last_updated,
-    })
+    )
 }

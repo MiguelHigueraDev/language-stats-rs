@@ -4,13 +4,15 @@ mod colors;
 mod github;
 mod models;
 mod refresh;
+mod stats;
 
-use crate::cache::{AppCache, SharedCache};
+use crate::cache::{CacheVariant, SharedCache};
 use crate::github::GithubClient;
+use crate::stats::{deserialize_exclude_list, parse_excludes_from_params};
 use anyhow::{Context, Result};
 use axum::{
     Router,
-    extract::State,
+    extract::{Query, State},
     http::{
         HeaderMap, HeaderValue, StatusCode,
         header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, IF_NONE_MATCH, LAST_MODIFIED},
@@ -18,10 +20,17 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use serde::Deserialize;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use tracing_subscriber::EnvFilter;
+
+#[derive(Debug, Deserialize)]
+struct LanguagesQuery {
+    #[serde(default, deserialize_with = "deserialize_exclude_list")]
+    exclude: Vec<String>,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -37,13 +46,13 @@ async fn main() -> Result<()> {
         env::var("GITHUB_USERNAME").context("GITHUB_USERNAME must be set in the environment")?;
     let token = env::var("GITHUB_TOKEN").ok();
 
-    let client = GithubClient::new(username, token)?;
+    let client = GithubClient::new(username.clone(), token)?;
 
-    let cache: SharedCache = Arc::new(RwLock::new(AppCache {
-        image_png: Vec::new(),
+    let cache: SharedCache = Arc::new(RwLock::new(cache::AppCache {
+        raw_totals: std::collections::HashMap::new(),
+        username,
         last_updated: chrono::Utc::now(),
-        language_stats: Vec::new(),
-        etag: String::new(),
+        variants: std::collections::HashMap::new(),
     }));
 
     refresh::initial_refresh(&cache, &client)
@@ -70,19 +79,33 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn get_languages(State(cache): State<SharedCache>, headers: HeaderMap) -> Response {
-    let guard = match cache.read() {
-        Ok(g) => g,
-        Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "cache unavailable").into_response();
+async fn get_languages(
+    State(cache): State<SharedCache>,
+    Query(query): Query<LanguagesQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let excludes = parse_excludes_from_params(&query.exclude);
+
+    let variant = match resolve_variant(&cache, &excludes) {
+        Ok(variant) => variant,
+        Err(err) => {
+            tracing::warn!(error = %err, exclude = ?excludes, "failed to render language chart");
+            return (StatusCode::BAD_REQUEST, err.to_string()).into_response();
         }
     };
 
     if let Some(if_none_match) = headers.get(IF_NONE_MATCH) {
-        if if_none_match.as_bytes() == guard.etag.as_bytes() {
+        if if_none_match.as_bytes() == variant.etag.as_bytes() {
             return StatusCode::NOT_MODIFIED.into_response();
         }
     }
+
+    let last_updated = match cache.read() {
+        Ok(guard) => guard.last_updated,
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "cache unavailable").into_response();
+        }
+    };
 
     let mut response_headers = HeaderMap::new();
     response_headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/png"));
@@ -92,13 +115,32 @@ async fn get_languages(State(cache): State<SharedCache>, headers: HeaderMap) -> 
     );
     response_headers.insert(
         LAST_MODIFIED,
-        HeaderValue::from_str(&httpdate::fmt_http_date(guard.last_updated.into()))
+        HeaderValue::from_str(&httpdate::fmt_http_date(last_updated.into()))
             .unwrap_or_else(|_| HeaderValue::from_static("Thu, 01 Jan 1970 00:00:00 GMT")),
     );
     response_headers.insert(
         ETAG,
-        HeaderValue::from_str(&guard.etag).unwrap_or_else(|_| HeaderValue::from_static("\"0\"")),
+        HeaderValue::from_str(&variant.etag)
+            .unwrap_or_else(|_| HeaderValue::from_static("\"0\"")),
     );
 
-    (response_headers, guard.image_png.clone()).into_response()
+    (response_headers, variant.image_png.clone()).into_response()
+}
+
+fn resolve_variant(cache: &SharedCache, excludes: &[String]) -> Result<CacheVariant> {
+    if let Ok(guard) = cache.read() {
+        if let Some(variant) = guard.get_variant(excludes) {
+            return Ok(variant.clone());
+        }
+    }
+
+    let mut guard = cache
+        .write()
+        .map_err(|_| anyhow::anyhow!("cache unavailable"))?;
+
+    if let Some(variant) = guard.get_variant(excludes) {
+        return Ok(variant.clone());
+    }
+
+    Ok(guard.render_variant(excludes)?.clone())
 }

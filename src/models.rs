@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -19,11 +18,4 @@ pub struct LanguageStat {
     pub name: String,
     pub bytes: u64,
     pub percentage: f64,
-}
-
-#[derive(Debug, Clone)]
-pub struct LanguageSnapshot {
-    pub stats: Vec<LanguageStat>,
-    pub image_png: Vec<u8>,
-    pub last_updated: DateTime<Utc>,
 }

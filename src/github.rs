@@ -1,4 +1,5 @@
-use crate::models::{GithubRepo, LanguageStat};
+use crate::models::GithubRepo;
+use crate::stats::{aggregate_top_six, language_stats_from_map};
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
 use serde_json::Value;
@@ -71,14 +72,14 @@ impl GithubClient {
         &self.username
     }
 
-    pub async fn fetch_language_stats(&self) -> Result<Vec<LanguageStat>> {
+    pub async fn fetch_language_totals(&self) -> Result<std::collections::HashMap<String, u64>> {
         let repos = self.fetch_repositories().await?;
         let totals = self.aggregate_languages(&repos).await?;
         let all_stats = language_stats_from_map(&totals);
         log_language_stats("all languages", &all_stats);
-        let chart_stats = aggregate_top_six(totals);
+        let chart_stats = aggregate_top_six(totals.clone())?;
         log_language_stats("chart (top 6 + other)", &chart_stats);
-        Ok(chart_stats)
+        Ok(totals)
     }
 
     async fn fetch_repositories(&self) -> Result<Vec<GithubRepo>> {
@@ -209,44 +210,7 @@ impl GithubClient {
     }
 }
 
-fn language_stats_from_map(totals: &HashMap<String, u64>) -> Vec<LanguageStat> {
-    let mut entries: Vec<(String, u64)> = totals
-        .iter()
-        .map(|(name, bytes)| (name.clone(), *bytes))
-        .collect();
-    entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-
-    let total_bytes: u64 = entries.iter().map(|(_, b)| b).sum();
-    entries
-        .into_iter()
-        .map(|(name, bytes)| LanguageStat {
-            name,
-            bytes,
-            percentage: if total_bytes == 0 {
-                0.0
-            } else {
-                (bytes as f64 / total_bytes as f64) * 100.0
-            },
-        })
-        .collect()
-}
-
-fn aggregate_top_six(totals: HashMap<String, u64>) -> Vec<LanguageStat> {
-    let mut entries: Vec<(String, u64)> = totals.into_iter().collect();
-    entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-
-    let top: Vec<(String, u64)> = entries.iter().take(6).cloned().collect();
-    let other_bytes: u64 = entries.iter().skip(6).map(|(_, b)| b).sum();
-
-    let mut partial: HashMap<String, u64> = top.into_iter().collect();
-    if other_bytes > 0 {
-        partial.insert("Other".to_string(), other_bytes);
-    }
-
-    language_stats_from_map(&partial)
-}
-
-fn log_language_stats(heading: &str, stats: &[LanguageStat]) {
+fn log_language_stats(heading: &str, stats: &[crate::models::LanguageStat]) {
     let total_bytes: u64 = stats.iter().map(|s| s.bytes).sum();
     tracing::info!(
         heading,
@@ -261,7 +225,7 @@ fn log_language_stats(heading: &str, stats: &[LanguageStat]) {
     }
 }
 
-fn format_language_table(stats: &[LanguageStat]) -> String {
+fn format_language_table(stats: &[crate::models::LanguageStat]) -> String {
     let mut lines = vec![format!(
         "{:<24} {:>14} {:>9}",
         "Language", "Bytes", "Percent"
