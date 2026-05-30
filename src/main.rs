@@ -30,6 +30,12 @@ use tracing_subscriber::EnvFilter;
 struct LanguagesQuery {
     #[serde(default, deserialize_with = "deserialize_exclude_list")]
     exclude: Vec<String>,
+    #[serde(default = "default_show_org", rename = "showOrg")]
+    show_org: bool,
+}
+
+fn default_show_org() -> bool {
+    true
 }
 
 #[tokio::main]
@@ -50,6 +56,7 @@ async fn main() -> Result<()> {
 
     let cache: SharedCache = Arc::new(RwLock::new(cache::AppCache {
         raw_totals: std::collections::HashMap::new(),
+        raw_totals_personal: std::collections::HashMap::new(),
         username,
         last_updated: chrono::Utc::now(),
         variants: std::collections::HashMap::new(),
@@ -86,10 +93,15 @@ async fn get_languages(
 ) -> Response {
     let excludes = parse_excludes_from_params(&query.exclude);
 
-    let variant = match resolve_variant(&cache, &excludes) {
+    let variant = match resolve_variant(&cache, &excludes, query.show_org) {
         Ok(variant) => variant,
         Err(err) => {
-            tracing::warn!(error = %err, exclude = ?excludes, "failed to render language chart");
+            tracing::warn!(
+                error = %err,
+                exclude = ?excludes,
+                show_org = query.show_org,
+                "failed to render language chart"
+            );
             return (StatusCode::BAD_REQUEST, err.to_string()).into_response();
         }
     };
@@ -127,9 +139,13 @@ async fn get_languages(
     (response_headers, variant.image_png.clone()).into_response()
 }
 
-fn resolve_variant(cache: &SharedCache, excludes: &[String]) -> Result<CacheVariant> {
+fn resolve_variant(
+    cache: &SharedCache,
+    excludes: &[String],
+    show_org: bool,
+) -> Result<CacheVariant> {
     if let Ok(guard) = cache.read() {
-        if let Some(variant) = guard.get_variant(excludes) {
+        if let Some(variant) = guard.get_variant(excludes, show_org) {
             return Ok(variant.clone());
         }
     }
@@ -138,9 +154,9 @@ fn resolve_variant(cache: &SharedCache, excludes: &[String]) -> Result<CacheVari
         .write()
         .map_err(|_| anyhow::anyhow!("cache unavailable"))?;
 
-    if let Some(variant) = guard.get_variant(excludes) {
+    if let Some(variant) = guard.get_variant(excludes, show_org) {
         return Ok(variant.clone());
     }
 
-    Ok(guard.render_variant(excludes)?.clone())
+    Ok(guard.render_variant(excludes, show_org)?.clone())
 }

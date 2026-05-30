@@ -25,6 +25,7 @@ async fn refresh_once(cache: &SharedCache, client: &GithubClient) -> Result<()> 
     let snapshot = build_cache(client).await?;
     tracing::info!(
         languages = snapshot.raw_totals.len(),
+        personal_languages = snapshot.raw_totals_personal.len(),
         cached_variants = snapshot.variants.len(),
         updated = %snapshot.last_updated,
         "cache refreshed successfully"
@@ -34,11 +35,7 @@ async fn refresh_once(cache: &SharedCache, client: &GithubClient) -> Result<()> 
 }
 
 async fn build_cache(client: &GithubClient) -> Result<crate::cache::AppCache> {
-    let raw_totals = client.fetch_language_totals().await?;
+    let totals = client.fetch_language_totals().await?;
     let last_updated = chrono::Utc::now();
-    crate::cache::AppCache::from_refresh(
-        raw_totals,
-        client.username().to_string(),
-        last_updated,
-    )
+    crate::cache::AppCache::from_refresh(totals, client.username().to_string(), last_updated)
 }

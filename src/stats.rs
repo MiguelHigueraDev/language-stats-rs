@@ -105,6 +105,10 @@ pub fn exclude_cache_key(excludes: &[String]) -> String {
     names.join(",")
 }
 
+pub fn variant_cache_key(excludes: &[String], show_org: bool) -> String {
+    format!("{}|showOrg={show_org}", exclude_cache_key(excludes))
+}
+
 pub fn apply_excludes(
     totals: HashMap<String, u64>,
     excludes: &[String],

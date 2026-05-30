@@ -1,4 +1,11 @@
 use serde::Deserialize;
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Default)]
+pub struct LanguageTotals {
+    pub with_org: HashMap<String, u64>,
+    pub personal_only: HashMap<String, u64>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GithubRepo {

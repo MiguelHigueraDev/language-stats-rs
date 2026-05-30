@@ -1,4 +1,4 @@
-use crate::models::GithubRepo;
+use crate::models::{GithubRepo, LanguageTotals};
 use crate::stats::{aggregate_top_six, language_stats_from_map};
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
@@ -72,13 +72,19 @@ impl GithubClient {
         &self.username
     }
 
-    pub async fn fetch_language_totals(&self) -> Result<std::collections::HashMap<String, u64>> {
+    pub async fn fetch_language_totals(&self) -> Result<LanguageTotals> {
         let repos = self.fetch_repositories().await?;
         let totals = self.aggregate_languages(&repos).await?;
-        let all_stats = language_stats_from_map(&totals);
-        log_language_stats("all languages", &all_stats);
-        let chart_stats = aggregate_top_six(totals.clone())?;
-        log_language_stats("chart (top 6)", &chart_stats);
+        let all_stats = language_stats_from_map(&totals.with_org);
+        log_language_stats("all languages (with org)", &all_stats);
+        let chart_stats = aggregate_top_six(totals.with_org.clone())?;
+        log_language_stats("chart (top 6, with org)", &chart_stats);
+
+        if !totals.personal_only.is_empty() {
+            let personal_stats = language_stats_from_map(&totals.personal_only);
+            log_language_stats("all languages (personal only)", &personal_stats);
+        }
+
         Ok(totals)
     }
 
@@ -145,16 +151,18 @@ impl GithubClient {
         Ok(all)
     }
 
-    async fn aggregate_languages(&self, repos: &[GithubRepo]) -> Result<HashMap<String, u64>> {
-        let mut totals: HashMap<String, u64> = HashMap::new();
+    async fn aggregate_languages(&self, repos: &[GithubRepo]) -> Result<LanguageTotals> {
+        let mut with_org: HashMap<String, u64> = HashMap::new();
+        let mut personal_only: HashMap<String, u64> = HashMap::new();
 
         let results: Vec<_> = stream::iter(repos.iter().cloned())
             .map(|repo| async move {
                 let owner = repo.owner.login.clone();
                 let name = repo.name.clone();
+                let is_personal = owner.eq_ignore_ascii_case(&self.username);
                 match self.fetch_repo_languages(&owner, &name).await {
                     Ok(map) if map.is_empty() => None,
-                    Ok(map) => Some(map),
+                    Ok(map) => Some((is_personal, map)),
                     Err(err) => {
                         tracing::warn!(
                             repo = %format!("{owner}/{name}"),
@@ -169,17 +177,24 @@ impl GithubClient {
             .collect()
             .await;
 
-        for languages in results.into_iter().flatten() {
+        for item in results.into_iter().flatten() {
+            let (is_personal, languages) = item;
             for (lang, bytes) in languages {
-                *totals.entry(lang).or_default() += bytes;
+                *with_org.entry(lang.clone()).or_default() += bytes;
+                if is_personal {
+                    *personal_only.entry(lang).or_default() += bytes;
+                }
             }
         }
 
-        if totals.is_empty() {
+        if with_org.is_empty() {
             anyhow::bail!("no language data found for user {}", self.username);
         }
 
-        Ok(totals)
+        Ok(LanguageTotals {
+            with_org,
+            personal_only,
+        })
     }
 
     async fn fetch_repo_languages(&self, owner: &str, repo: &str) -> Result<HashMap<String, u64>> {
