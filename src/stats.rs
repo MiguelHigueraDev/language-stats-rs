@@ -128,8 +128,11 @@ pub fn exclude_cache_key(excludes: &[String]) -> String {
     names.join(",")
 }
 
-pub fn variant_cache_key(excludes: &[String], show_org: bool) -> String {
-    format!("{}|showOrg={show_org}", exclude_cache_key(excludes))
+pub fn variant_cache_key(excludes: &[String], show_org: bool, show_username: bool) -> String {
+    format!(
+        "{}|showOrg={show_org}|showUsername={show_username}",
+        exclude_cache_key(excludes)
+    )
 }
 
 pub fn apply_excludes(

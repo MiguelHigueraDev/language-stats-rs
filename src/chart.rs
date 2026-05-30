@@ -12,8 +12,20 @@ const HEIGHT: u32 = 630;
 const CARD_RADIUS: i32 = 24;
 const CARD_MARGIN: i32 = 28;
 const INNER_PADDING: i32 = 36;
+const PIE_CENTER_X_OFFSET: i32 = 280;
+const PIE_CENTER_Y_OFFSET: i32 = 200;
+const PIE_RADIUS: i32 = 175;
+const BARS_X_OFFSET: i32 = 560;
+const BARS_TOP_OFFSET: i32 = 10;
+const BAR_MAX_WIDTH: i32 = 500;
+const ROW_HEIGHT: i32 = 58;
+const HEADER_GAP: i32 = 44;
 
-pub fn render_language_card(username: &str, stats: &[LanguageStat]) -> Result<Vec<u8>> {
+pub fn render_language_card(
+    username: &str,
+    stats: &[LanguageStat],
+    show_username: bool,
+) -> Result<Vec<u8>> {
     let mut img = RgbaImage::from_pixel(WIDTH, HEIGHT, colors::background());
     let font = FontRef::try_from_slice(include_bytes!("../assets/Roboto-Regular.ttf"))
         .context("failed to load embedded font")?;
@@ -32,39 +44,49 @@ pub fn render_language_card(username: &str, stats: &[LanguageStat]) -> Result<Ve
         colors::card(),
     );
 
-    draw_text(
-        &mut img,
-        &font,
-        34.0,
-        (card_x0 + INNER_PADDING) as f32,
-        (card_y0 + INNER_PADDING) as f32,
-        &format!("@{username}"),
-        colors::text_primary(),
-    );
+    let subtitle_y = if show_username {
+        draw_text(
+            &mut img,
+            &font,
+            34.0,
+            (card_x0 + INNER_PADDING) as f32,
+            (card_y0 + INNER_PADDING) as f32,
+            &format!("@{username}"),
+            colors::text_primary(),
+        );
+        card_y0 + INNER_PADDING + HEADER_GAP
+    } else {
+        card_y0 + INNER_PADDING
+    };
     draw_text(
         &mut img,
         &font,
         22.0,
         (card_x0 + INNER_PADDING) as f32,
-        (card_y0 + INNER_PADDING + 44) as f32,
+        subtitle_y as f32,
         "Repository languages",
         colors::text_muted(),
     );
 
-    let content_top = card_y0 + INNER_PADDING + 88;
-    let pie_cx = card_x0 + 280;
-    let pie_cy = content_top + 200;
-    let pie_radius = 175;
+    let content_block_height = PIE_CENTER_Y_OFFSET + PIE_RADIUS;
+    let content_top = if show_username {
+        subtitle_y + HEADER_GAP
+    } else {
+        let area_top = subtitle_y + HEADER_GAP;
+        let area_bottom = card_y1 - INNER_PADDING;
+        let spare = (area_bottom - area_top - content_block_height).max(0);
+        area_top + spare / 2
+    };
+    let pie_cx = card_x0 + PIE_CENTER_X_OFFSET;
+    let pie_cy = content_top + PIE_CENTER_Y_OFFSET;
 
-    draw_pie_chart(&mut img, pie_cx, pie_cy, pie_radius, stats);
+    draw_pie_chart(&mut img, pie_cx, pie_cy, PIE_RADIUS, stats);
 
-    let bars_x = card_x0 + 560;
-    let bars_top = content_top + 10;
-    let bar_max_width = 500;
-    let row_height = 58;
+    let bars_x = card_x0 + BARS_X_OFFSET;
+    let bars_top = content_top + BARS_TOP_OFFSET;
 
     for (i, stat) in stats.iter().enumerate() {
-        let y = bars_top + (i as i32) * row_height;
+        let y = bars_top + (i as i32) * ROW_HEIGHT;
         let color = colors::language_color(&stat.name);
 
         draw_text(
@@ -78,10 +100,10 @@ pub fn render_language_card(username: &str, stats: &[LanguageStat]) -> Result<Ve
         );
 
         let bar_y = y + 30;
-        let bar_width = ((stat.percentage / 100.0) * bar_max_width as f64).round() as u32;
+        let bar_width = ((stat.percentage / 100.0) * BAR_MAX_WIDTH as f64).round() as u32;
         draw_filled_rect_mut(
             &mut img,
-            imageproc::rect::Rect::at(bars_x, bar_y).of_size(bar_max_width as u32, 10),
+            imageproc::rect::Rect::at(bars_x, bar_y).of_size(BAR_MAX_WIDTH as u32, 10),
             Rgba([48, 54, 61, 255]),
         );
         if bar_width > 0 {
@@ -97,7 +119,7 @@ pub fn render_language_card(username: &str, stats: &[LanguageStat]) -> Result<Ve
             &mut img,
             &font,
             22.0,
-            (bars_x + bar_max_width + 16) as f32,
+            (bars_x + BAR_MAX_WIDTH + 16) as f32,
             (bar_y - 4) as f32,
             &pct_label,
             colors::text_muted(),

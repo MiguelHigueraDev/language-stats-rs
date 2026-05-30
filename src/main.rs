@@ -32,9 +32,15 @@ struct LanguagesQuery {
     exclude: Vec<String>,
     #[serde(default = "default_show_org", rename = "showOrg")]
     show_org: bool,
+    #[serde(default = "default_show_username", rename = "showUsername")]
+    show_username: bool,
 }
 
 fn default_show_org() -> bool {
+    true
+}
+
+fn default_show_username() -> bool {
     true
 }
 
@@ -93,13 +99,14 @@ async fn get_languages(
 ) -> Response {
     let excludes = parse_excludes_from_params(&query.exclude);
 
-    let variant = match resolve_variant(&cache, &excludes, query.show_org) {
+    let variant = match resolve_variant(&cache, &excludes, query.show_org, query.show_username) {
         Ok(variant) => variant,
         Err(err) => {
             tracing::warn!(
                 error = %err,
                 exclude = ?excludes,
                 show_org = query.show_org,
+                show_username = query.show_username,
                 "failed to render language chart"
             );
             return (StatusCode::BAD_REQUEST, err.to_string()).into_response();
@@ -143,9 +150,10 @@ fn resolve_variant(
     cache: &SharedCache,
     excludes: &[String],
     show_org: bool,
+    show_username: bool,
 ) -> Result<CacheVariant> {
     if let Ok(guard) = cache.read() {
-        if let Some(variant) = guard.get_variant(excludes, show_org) {
+        if let Some(variant) = guard.get_variant(excludes, show_org, show_username) {
             return Ok(variant.clone());
         }
     }
@@ -154,9 +162,11 @@ fn resolve_variant(
         .write()
         .map_err(|_| anyhow::anyhow!("cache unavailable"))?;
 
-    if let Some(variant) = guard.get_variant(excludes, show_org) {
+    if let Some(variant) = guard.get_variant(excludes, show_org, show_username) {
         return Ok(variant.clone());
     }
 
-    Ok(guard.render_variant(excludes, show_org)?.clone())
+    Ok(guard
+        .render_variant(excludes, show_org, show_username)?
+        .clone())
 }
