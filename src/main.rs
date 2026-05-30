@@ -27,6 +27,13 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use tracing_subscriber::EnvFilter;
 
+#[derive(Clone)]
+struct AppState {
+    cache: SharedCache,
+    client: GithubClient,
+    default_username: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
@@ -37,33 +44,34 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let username =
+    let default_username =
         env::var("GITHUB_USERNAME").context("GITHUB_USERNAME must be set in the environment")?;
     let token = env::var("GITHUB_TOKEN").ok();
 
-    let client = GithubClient::new(username.clone(), token)?;
+    let client = GithubClient::new(default_username.clone(), token)?;
 
-    let cache: SharedCache = Arc::new(RwLock::new(cache::AppCache {
-        raw_totals: std::collections::HashMap::new(),
-        raw_totals_personal: std::collections::HashMap::new(),
-        username,
-        last_updated: chrono::Utc::now(),
-        variants: std::collections::HashMap::new(),
-    }));
+    let cache: SharedCache = Arc::new(RwLock::new(cache::AppCache::new()));
 
-    refresh::initial_refresh(&cache, &client)
+    refresh::initial_refresh(&cache, &client, &default_username)
         .await
         .context("startup GitHub fetch failed")?;
 
     let refresh_cache = Arc::clone(&cache);
     let refresh_client = client.clone();
+    let refresh_username = default_username.clone();
     tokio::spawn(async move {
-        refresh::run_refresh_loop(refresh_cache, refresh_client).await;
+        refresh::run_refresh_loop(refresh_cache, refresh_client, refresh_username).await;
     });
+
+    let state = AppState {
+        cache,
+        client,
+        default_username,
+    };
 
     let app = Router::new()
         .route("/languages", get(get_languages))
-        .with_state(cache);
+        .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     tracing::info!(%addr, "listening");
@@ -76,14 +84,29 @@ async fn main() -> Result<()> {
 }
 
 async fn get_languages(
-    State(cache): State<SharedCache>,
+    State(state): State<AppState>,
     query: LanguagesQuery,
     headers: HeaderMap,
 ) -> Response {
+    let username = query
+        .username
+        .as_deref()
+        .unwrap_or(&state.default_username);
+
+    if let Err(err) = refresh::ensure_user_cached(&state.cache, &state.client, username).await {
+        tracing::warn!(
+            error = %err,
+            user = %username,
+            "failed to fetch GitHub language data"
+        );
+        return (StatusCode::BAD_GATEWAY, err.to_string()).into_response();
+    }
+
     let excludes = parse_excludes_from_params(&query.exclude);
 
     let variant = match resolve_variant(
-        &cache,
+        &state.cache,
+        username,
         &excludes,
         query.show_org,
         query.show_username,
@@ -93,6 +116,7 @@ async fn get_languages(
         Err(err) => {
             tracing::warn!(
                 error = %err,
+                user = %username,
                 exclude = ?excludes,
                 show_org = query.show_org,
                 show_username = query.show_username,
@@ -109,8 +133,11 @@ async fn get_languages(
         }
     }
 
-    let last_updated = match cache.read() {
-        Ok(guard) => guard.last_updated,
+    let last_updated = match state.cache.read() {
+        Ok(guard) => guard
+            .get_user(username)
+            .map(|entry| entry.last_updated)
+            .unwrap_or_else(chrono::Utc::now),
         Err(_) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, "cache unavailable").into_response();
         }
@@ -138,14 +165,19 @@ async fn get_languages(
 
 fn resolve_variant(
     cache: &SharedCache,
+    username: &str,
     excludes: &[String],
     show_org: bool,
     show_username: bool,
     minimal: bool,
 ) -> Result<CacheVariant> {
     if let Ok(guard) = cache.read() {
-        if let Some(variant) = guard.get_variant(excludes, show_org, show_username, minimal) {
-            return Ok(variant.clone());
+        if let Some(user_cache) = guard.get_user(username) {
+            if let Some(variant) =
+                user_cache.get_variant(excludes, show_org, show_username, minimal)
+            {
+                return Ok(variant.clone());
+            }
         }
     }
 
@@ -153,11 +185,16 @@ fn resolve_variant(
         .write()
         .map_err(|_| anyhow::anyhow!("cache unavailable"))?;
 
-    if let Some(variant) = guard.get_variant(excludes, show_org, show_username, minimal) {
+    let user_cache = guard
+        .users
+        .get_mut(&cache::AppCache::cache_key(username))
+        .ok_or_else(|| anyhow::anyhow!("no cached data for user {username}"))?;
+
+    if let Some(variant) = user_cache.get_variant(excludes, show_org, show_username, minimal) {
         return Ok(variant.clone());
     }
 
-    Ok(guard
-        .render_variant(excludes, show_org, show_username, minimal)?
+    Ok(user_cache
+        .render_variant(username, excludes, show_org, show_username, minimal)?
         .clone())
 }

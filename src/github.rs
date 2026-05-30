@@ -13,13 +13,18 @@ const MAX_CONCURRENT_LANG_REQUESTS: usize = 10;
 #[derive(Clone)]
 pub struct GithubClient {
     http: reqwest::Client,
-    username: String,
-    /// When set, list repos via `/user/repos` (includes private + org access).
-    authenticated: bool,
+    env_username: String,
+    has_token: bool,
+}
+
+/// Private repos are only available when a token is configured for the env user
+/// and the requested username matches that user.
+pub fn can_use_authenticated_listing(has_token: bool, env_username: &str, username: &str) -> bool {
+    has_token && username.eq_ignore_ascii_case(env_username)
 }
 
 impl GithubClient {
-    pub fn new(username: String, token: Option<String>) -> Result<Self> {
+    pub fn new(env_username: String, token: Option<String>) -> Result<Self> {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::USER_AGENT,
@@ -29,7 +34,7 @@ impl GithubClient {
             reqwest::header::ACCEPT,
             reqwest::header::HeaderValue::from_static("application/vnd.github+json"),
         );
-        let authenticated = token.is_some();
+        let has_token = token.is_some();
         if let Some(token) = token {
             let value = format!("Bearer {token}");
             headers.insert(
@@ -45,13 +50,13 @@ impl GithubClient {
 
         Ok(Self {
             http,
-            username,
-            authenticated,
+            env_username,
+            has_token,
         })
     }
 
-    fn repos_list_url(&self, page: u32) -> String {
-        if self.authenticated {
+    fn repos_list_url(&self, username: &str, page: u32) -> String {
+        if can_use_authenticated_listing(self.has_token, &self.env_username, username) {
             // Authenticated listing: owner, org member, and collaborator repos (public + private).
             format!(
                 "{API_BASE}/user/repos?per_page={PER_PAGE}&page={page}\
@@ -61,20 +66,15 @@ impl GithubClient {
         } else {
             // Public listing; type=all includes org/member repos (default API type is owner-only).
             format!(
-                "{API_BASE}/users/{}/repos?per_page={PER_PAGE}&page={page}\
-                 &type=all&sort=pushed&direction=desc",
-                self.username
+                "{API_BASE}/users/{username}/repos?per_page={PER_PAGE}&page={page}\
+                 &type=all&sort=pushed&direction=desc"
             )
         }
     }
 
-    pub fn username(&self) -> &str {
-        &self.username
-    }
-
-    pub async fn fetch_language_totals(&self) -> Result<LanguageTotals> {
-        let repos = self.fetch_repositories().await?;
-        let totals = self.aggregate_languages(&repos).await?;
+    pub async fn fetch_language_totals(&self, username: &str) -> Result<LanguageTotals> {
+        let repos = self.fetch_repositories(username).await?;
+        let totals = self.aggregate_languages(username, &repos).await?;
         let all_stats = language_stats_from_map(&totals.with_org);
         log_language_stats("all languages (with org)", &all_stats);
         let chart_stats = aggregate_top_six(totals.with_org.clone())?;
@@ -88,7 +88,7 @@ impl GithubClient {
         Ok(totals)
     }
 
-    async fn fetch_repositories(&self) -> Result<Vec<GithubRepo>> {
+    async fn fetch_repositories(&self, username: &str) -> Result<Vec<GithubRepo>> {
         let mut all = Vec::new();
         let mut raw_total = 0usize;
         let mut skipped_fork = 0usize;
@@ -99,7 +99,7 @@ impl GithubClient {
                 break;
             }
 
-            let url = self.repos_list_url(page);
+            let url = self.repos_list_url(username, page);
 
             let batch: Vec<GithubRepo> = self
                 .http
@@ -140,7 +140,7 @@ impl GithubClient {
         }
 
         tracing::info!(
-            user = %self.username,
+            user = %username,
             raw = raw_total,
             kept = all.len(),
             skipped_fork,
@@ -151,7 +151,11 @@ impl GithubClient {
         Ok(all)
     }
 
-    async fn aggregate_languages(&self, repos: &[GithubRepo]) -> Result<LanguageTotals> {
+    async fn aggregate_languages(
+        &self,
+        username: &str,
+        repos: &[GithubRepo],
+    ) -> Result<LanguageTotals> {
         let mut with_org: HashMap<String, u64> = HashMap::new();
         let mut personal_only: HashMap<String, u64> = HashMap::new();
 
@@ -159,7 +163,7 @@ impl GithubClient {
             .map(|repo| async move {
                 let owner = repo.owner.login.clone();
                 let name = repo.name.clone();
-                let is_personal = owner.eq_ignore_ascii_case(&self.username);
+                let is_personal = owner.eq_ignore_ascii_case(username);
                 match self.fetch_repo_languages(&owner, &name).await {
                     Ok(map) if map.is_empty() => None,
                     Ok(map) => Some((is_personal, map)),
@@ -188,7 +192,7 @@ impl GithubClient {
         }
 
         if with_org.is_empty() {
-            anyhow::bail!("no language data found for user {}", self.username);
+            anyhow::bail!("no language data found for user {username}");
         }
 
         Ok(LanguageTotals {
@@ -237,6 +241,31 @@ fn log_language_stats(heading: &str, stats: &[crate::models::LanguageStat]) {
     let table = format_language_table(stats);
     for line in table.lines() {
         tracing::info!(heading, "{line}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authenticated_listing_requires_token_and_matching_username() {
+        assert!(can_use_authenticated_listing(
+            true,
+            "alice",
+            "alice"
+        ));
+        assert!(can_use_authenticated_listing(
+            true,
+            "Alice",
+            "alice"
+        ));
+        assert!(!can_use_authenticated_listing(
+            false,
+            "alice",
+            "alice"
+        ));
+        assert!(!can_use_authenticated_listing(true, "alice", "bob"));
     }
 }
 

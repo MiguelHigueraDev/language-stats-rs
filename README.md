@@ -41,6 +41,7 @@ All options apply to `GET /languages`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
+| `username` | `GITHUB_USERNAME` | GitHub user whose repository languages are visualized. When this differs from `GITHUB_USERNAME`, or when no `GITHUB_TOKEN` is configured, only public repositories are included. |
 | `exclude` | _(none)_ | Languages to omit from the chart. Comma-separated in one param, or repeated params. Matching is case-insensitive. |
 | `showOrg` | `true` | When `true`, include organization repositories. When `false`, use personal repositories only. |
 | `showUsername` | `true` | When `true`, show `@username` in the full chart header. Ignored when `minimal=true`. |
@@ -65,6 +66,9 @@ curl 'http://localhost:3000/languages?exclude=Jupyter%20Notebook' --output langu
 **Chart layout examples**
 
 ```bash
+# Another user's public repositories
+curl 'http://localhost:3000/languages?username=torvalds' --output languages.svg
+
 # Full card without username
 curl 'http://localhost:3000/languages?showUsername=false' --output languages.svg
 

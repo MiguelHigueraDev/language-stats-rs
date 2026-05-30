@@ -6,6 +6,9 @@ use chrono::{DateTime, Utc};
 use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher as _};
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
+
+pub const CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Debug, Clone)]
 pub struct CacheVariant {
@@ -16,29 +19,31 @@ pub struct CacheVariant {
 }
 
 #[derive(Debug, Clone)]
-pub struct AppCache {
+pub struct UserCache {
     pub raw_totals: HashMap<String, u64>,
     pub raw_totals_personal: HashMap<String, u64>,
-    pub username: String,
     pub last_updated: DateTime<Utc>,
     pub variants: HashMap<String, CacheVariant>,
 }
 
-impl AppCache {
+impl UserCache {
     pub fn from_refresh(
         totals: crate::models::LanguageTotals,
-        username: String,
         last_updated: DateTime<Utc>,
     ) -> Result<Self> {
         let mut cache = Self {
             raw_totals: totals.with_org,
             raw_totals_personal: totals.personal_only,
-            username,
             last_updated,
             variants: HashMap::new(),
         };
-        cache.render_variant(&[], true, true, false)?;
+        cache.render_variant("", &[], true, true, false)?;
         Ok(cache)
+    }
+
+    pub fn is_stale(&self) -> bool {
+        Utc::now().signed_duration_since(self.last_updated)
+            > chrono::Duration::from_std(CACHE_TTL).unwrap_or_else(|_| chrono::Duration::zero())
     }
 
     fn totals_for_scope(&self, show_org: bool) -> Result<HashMap<String, u64>> {
@@ -64,6 +69,7 @@ impl AppCache {
 
     pub fn render_variant(
         &mut self,
+        username: &str,
         excludes: &[String],
         show_org: bool,
         show_username: bool,
@@ -79,7 +85,7 @@ impl AppCache {
         let image_svg = if minimal {
             chart::render_minimal_language_card(&stats)?
         } else {
-            chart::render_language_card(&self.username, &stats, show_username)?
+            chart::render_language_card(username, &stats, show_username)?
         };
         let etag = compute_etag(&image_svg, self.last_updated, &key);
         self.variants.insert(
@@ -91,6 +97,31 @@ impl AppCache {
             },
         );
         Ok(self.variants.get(&key).expect("variant just inserted"))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AppCache {
+    pub users: HashMap<String, UserCache>,
+}
+
+impl AppCache {
+    pub fn new() -> Self {
+        Self {
+            users: HashMap::new(),
+        }
+    }
+
+    pub fn cache_key(username: &str) -> String {
+        username.to_lowercase()
+    }
+
+    pub fn get_user(&self, username: &str) -> Option<&UserCache> {
+        self.users.get(&Self::cache_key(username))
+    }
+
+    pub fn upsert_user(&mut self, username: &str, cache: UserCache) {
+        self.users.insert(Self::cache_key(username), cache);
     }
 }
 

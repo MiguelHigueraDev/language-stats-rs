@@ -15,6 +15,8 @@ pub struct LanguagesQuery {
     pub show_username: bool,
     #[serde(default)]
     pub minimal: bool,
+    #[serde(default)]
+    pub username: Option<String>,
 }
 
 fn default_show_org() -> bool {
