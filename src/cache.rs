@@ -53,8 +53,8 @@ impl UserCache {
             > chrono::Duration::from_std(CACHE_TTL).unwrap_or_else(|_| chrono::Duration::zero())
     }
 
-    fn totals_for_scope(&self, show_org: bool) -> Result<HashMap<String, u64>> {
-        if show_org {
+    fn totals_for_scope(&self, include_org: bool) -> Result<HashMap<String, u64>> {
+        if include_org {
             Ok(self.raw_totals.clone())
         } else if self.raw_totals_personal.is_empty() {
             anyhow::bail!("no personal repository language data found");
@@ -66,11 +66,11 @@ impl UserCache {
     pub fn get_variant(
         &self,
         excludes: &[String],
-        show_org: bool,
+        include_org: bool,
         show_username: bool,
         minimal: bool,
     ) -> Option<&CacheVariant> {
-        let key = variant_cache_key(excludes, show_org, show_username, minimal);
+        let key = variant_cache_key(excludes, include_org, show_username, minimal);
         self.variants.get(&key)
     }
 
@@ -78,16 +78,16 @@ impl UserCache {
         &mut self,
         username: &str,
         excludes: &[String],
-        show_org: bool,
+        include_org: bool,
         show_username: bool,
         minimal: bool,
     ) -> Result<&CacheVariant> {
-        let key = variant_cache_key(excludes, show_org, show_username, minimal);
+        let key = variant_cache_key(excludes, include_org, show_username, minimal);
         if self.variants.contains_key(&key) {
             return Ok(self.variants.get(&key).expect("variant just checked"));
         }
 
-        let filtered = apply_excludes(self.totals_for_scope(show_org)?, excludes)?;
+        let filtered = apply_excludes(self.totals_for_scope(include_org)?, excludes)?;
         let stats = aggregate_top_six(filtered)?;
         let image_svg = if minimal {
             chart::render_minimal_language_card(&stats)?
@@ -143,12 +143,12 @@ impl AppCache {
         &mut self,
         username: &str,
         excludes: &[String],
-        show_org: bool,
+        include_org: bool,
         show_username: bool,
         minimal: bool,
     ) -> Result<CacheVariant> {
         let user_key = Self::cache_key(username);
-        let variant_key = variant_cache_key(excludes, show_org, show_username, minimal);
+        let variant_key = variant_cache_key(excludes, include_org, show_username, minimal);
 
         {
             let user = self
@@ -160,7 +160,7 @@ impl AppCache {
                 return Ok(variant.clone());
             }
 
-            user.render_variant(username, excludes, show_org, show_username, minimal)?;
+            user.render_variant(username, excludes, include_org, show_username, minimal)?;
         }
 
         self.register_image(&user_key, &variant_key);

@@ -43,7 +43,7 @@ All options apply to `GET /languages`:
 |-----------|---------|-------------|
 | `username` | `GITHUB_USERNAME` | GitHub user whose repository languages are visualized. When this differs from `GITHUB_USERNAME`, or when no `GITHUB_TOKEN` is configured, only public repositories are included. |
 | `exclude` | _(none)_ | Languages to omit from the chart. Comma-separated in one param, or repeated params. Matching is case-insensitive. |
-| `showOrg` | `true` | When `true`, include organization repositories. When `false`, use personal repositories only. |
+| `includeOrg` | `true` | When `true`, include organization repositories. When `false`, use personal repositories only. |
 | `showUsername` | `true` | When `true`, show `@username` in the full chart header. Ignored when `minimal=true`. |
 | `minimal` | `false` | When `true`, render a compact 300px-wide badge instead of the full 1200×630 card. |
 
@@ -73,13 +73,13 @@ curl 'http://localhost:3000/languages?username=torvalds' --output languages.svg
 curl 'http://localhost:3000/languages?showUsername=false' --output languages.svg
 
 # Personal repos only
-curl 'http://localhost:3000/languages?showOrg=false' --output languages.svg
+curl 'http://localhost:3000/languages?includeOrg=false' --output languages.svg
 
 # Compact badge
 curl 'http://localhost:3000/languages?minimal=true' --output languages.svg
 
 # Combined (comma-separated flags are supported for badge URLs)
-curl 'http://localhost:3000/languages?minimal=true,showUsername=false,showOrg=false&exclude=HTML,CSS' --output languages.svg
+curl 'http://localhost:3000/languages?minimal=true,showUsername=false,includeOrg=false&exclude=HTML,CSS' --output languages.svg
 ```
 
 Responses are cached for 30 minutes (`Cache-Control: public, max-age=1800`) and support conditional requests via `ETag` / `If-None-Match`. GitHub data is refreshed in the background every 30 minutes.

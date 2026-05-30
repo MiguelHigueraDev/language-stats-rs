@@ -108,7 +108,7 @@ async fn get_languages(
         &state.cache,
         username,
         &excludes,
-        query.show_org,
+        query.include_org,
         query.show_username,
         query.minimal,
     ) {
@@ -118,7 +118,7 @@ async fn get_languages(
                 error = %err,
                 user = %username,
                 exclude = ?excludes,
-                show_org = query.show_org,
+                include_org = query.include_org,
                 show_username = query.show_username,
                 minimal = query.minimal,
                 "failed to render language chart"
@@ -167,14 +167,14 @@ fn resolve_variant(
     cache: &SharedCache,
     username: &str,
     excludes: &[String],
-    show_org: bool,
+    include_org: bool,
     show_username: bool,
     minimal: bool,
 ) -> Result<CacheVariant> {
     if let Ok(guard) = cache.read() {
         if let Some(user_cache) = guard.get_user(username) {
             if let Some(variant) =
-                user_cache.get_variant(excludes, show_org, show_username, minimal)
+                user_cache.get_variant(excludes, include_org, show_username, minimal)
             {
                 return Ok(variant.clone());
             }
@@ -186,11 +186,11 @@ fn resolve_variant(
         .map_err(|_| anyhow::anyhow!("cache unavailable"))?;
 
     if let Some(variant) = guard.get_user(username).and_then(|user_cache| {
-        user_cache.get_variant(excludes, show_org, show_username, minimal)
+        user_cache.get_variant(excludes, include_org, show_username, minimal)
     }) {
         return Ok(variant.clone());
     }
 
     Ok(guard
-        .render_user_variant(username, excludes, show_org, show_username, minimal)?)
+        .render_user_variant(username, excludes, include_org, show_username, minimal)?)
 }
