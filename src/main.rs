@@ -127,7 +127,7 @@ async fn get_languages(
     };
 
     let mut response_headers = HeaderMap::new();
-    response_headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/png"));
+    response_headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/svg+xml"));
     response_headers.insert(
         CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=1800"),
@@ -143,7 +143,7 @@ async fn get_languages(
             .unwrap_or_else(|_| HeaderValue::from_static("\"0\"")),
     );
 
-    (response_headers, variant.image_png.clone()).into_response()
+    (response_headers, variant.image_svg.clone()).into_response()
 }
 
 fn resolve_variant(

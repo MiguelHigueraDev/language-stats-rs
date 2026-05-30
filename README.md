@@ -1,6 +1,6 @@
 # language-stats-rs
 
-Axum service that serves a PNG chart of GitHub repository language usage.
+Axum service that serves an SVG chart of GitHub repository language usage.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ The server listens on `http://localhost:3000`.
 ## Test
 
 ```bash
-curl http://localhost:3000/languages --output languages.png
+curl http://localhost:3000/languages --output languages.svg
 ```
 
 ## License

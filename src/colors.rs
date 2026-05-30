@@ -1,9 +1,10 @@
-use image::Rgba;
-
 const BG: &str = "#0d1117";
 const CARD: &str = "#161b22";
+const CARD_BORDER: &str = "#30363d";
+const DIVIDER: &str = "#21262d";
 const TEXT_PRIMARY: &str = "#f0f6fc";
 const TEXT_MUTED: &str = "#8b949e";
+const BAR_TRACK: &str = "#21262d";
 const FALLBACK: &str = "#6e7681";
 
 /// GitHub Linguist colors (https://github.com/github-linguist/linguist) where defined.
@@ -59,26 +60,36 @@ static LANGUAGE_COLORS: &[(&str, &str)] = &[
     ("Xmake", "#22a079"),
 ];
 
-pub fn background() -> Rgba<u8> {
-    hex_color(BG)
+pub fn background() -> &'static str {
+    BG
 }
 
-pub fn card() -> Rgba<u8> {
-    hex_color(CARD)
+pub fn card() -> &'static str {
+    CARD
 }
 
-pub fn text_primary() -> Rgba<u8> {
-    hex_color(TEXT_PRIMARY)
+pub fn card_border() -> &'static str {
+    CARD_BORDER
 }
 
-pub fn text_muted() -> Rgba<u8> {
-    hex_color(TEXT_MUTED)
+pub fn divider() -> &'static str {
+    DIVIDER
 }
 
-pub fn language_color(name: &str) -> Rgba<u8> {
-    language_hex(name)
-        .map(hex_color)
-        .unwrap_or_else(|| hex_color(FALLBACK))
+pub fn text_primary() -> &'static str {
+    TEXT_PRIMARY
+}
+
+pub fn text_muted() -> &'static str {
+    TEXT_MUTED
+}
+
+pub fn bar_track() -> &'static str {
+    BAR_TRACK
+}
+
+pub fn language_color(name: &str) -> &'static str {
+    language_hex(name).unwrap_or(FALLBACK)
 }
 
 fn language_hex(name: &str) -> Option<&'static str> {
@@ -86,13 +97,4 @@ fn language_hex(name: &str) -> Option<&'static str> {
         .iter()
         .find(|(lang, _)| *lang == name)
         .map(|(_, hex)| *hex)
-}
-
-fn hex_color(hex: &str) -> Rgba<u8> {
-    let hex = hex.trim_start_matches('#');
-    let parse = |s: &str| u8::from_str_radix(s, 16).unwrap_or(0);
-    match hex.len() {
-        6 => Rgba([parse(&hex[0..2]), parse(&hex[2..4]), parse(&hex[4..6]), 255]),
-        _ => Rgba([0, 0, 0, 255]),
-    }
 }

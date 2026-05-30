@@ -1,286 +1,231 @@
 use crate::colors;
 use crate::models::LanguageStat;
-use ab_glyph::{FontRef, PxScale};
-use anyhow::{Context, Result};
-use image::{Rgba, RgbaImage};
-use imageproc::drawing::{draw_filled_rect_mut, draw_text_mut};
+use anyhow::Result;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use std::f32::consts::PI;
-use std::io::Cursor;
 
 const WIDTH: u32 = 1200;
 const HEIGHT: u32 = 630;
 const CARD_RADIUS: i32 = 24;
 const CARD_MARGIN: i32 = 28;
 const INNER_PADDING: i32 = 36;
-const PIE_CENTER_X_OFFSET: i32 = 280;
-const PIE_CENTER_Y_OFFSET: i32 = 200;
-const PIE_RADIUS: i32 = 175;
-const BARS_X_OFFSET: i32 = 560;
-const BARS_TOP_OFFSET: i32 = 10;
-const BAR_MAX_WIDTH: i32 = 500;
-const ROW_HEIGHT: i32 = 58;
-const HEADER_GAP: i32 = 44;
+const PIE_RADIUS: i32 = 165;
+const PIE_INNER_RADIUS: i32 = 98;
+const BARS_X_OFFSET: i32 = 520;
+const LEGEND_WIDTH: i32 = 148;
+const PCT_COLUMN_WIDTH: i32 = 58;
+const BAR_PCT_GAP: i32 = 16;
+const ROW_HEIGHT: i32 = 52;
+const BAR_HEIGHT: i32 = 8;
+const BAR_RADIUS: i32 = 4;
+const SWATCH_SIZE: i32 = 12;
+const HEADER_GAP: i32 = 12;
+const SLICE_GAP: f32 = 0.012;
+
+const ROBOTO_TTF: &[u8] = include_bytes!("../assets/Roboto-Regular.ttf");
 
 pub fn render_language_card(
     username: &str,
     stats: &[LanguageStat],
     show_username: bool,
 ) -> Result<Vec<u8>> {
-    let mut img = RgbaImage::from_pixel(WIDTH, HEIGHT, colors::background());
-    let font = FontRef::try_from_slice(include_bytes!("../assets/Roboto-Regular.ttf"))
-        .context("failed to load embedded font")?;
-
     let card_x0 = CARD_MARGIN;
     let card_y0 = CARD_MARGIN;
     let card_x1 = (WIDTH as i32) - CARD_MARGIN;
     let card_y1 = (HEIGHT as i32) - CARD_MARGIN;
-    fill_rounded_rect(
-        &mut img,
-        card_x0,
-        card_y0,
-        card_x1,
-        card_y1,
-        CARD_RADIUS,
-        colors::card(),
-    );
+    let card_width = card_x1 - card_x0;
+    let card_height = card_y1 - card_y0;
 
-    let subtitle_y = if show_username {
-        draw_text(
-            &mut img,
-            &font,
-            34.0,
-            (card_x0 + INNER_PADDING) as f32,
-            (card_y0 + INNER_PADDING) as f32,
-            &format!("@{username}"),
-            colors::text_primary(),
-        );
-        card_y0 + INNER_PADDING + HEADER_GAP
-    } else {
-        card_y0 + INNER_PADDING
-    };
-    draw_text(
-        &mut img,
-        &font,
-        22.0,
-        (card_x0 + INNER_PADDING) as f32,
-        subtitle_y as f32,
-        "Repository languages",
-        colors::text_muted(),
-    );
+    let font_base64 = STANDARD.encode(ROBOTO_TTF);
 
-    let content_block_height = PIE_CENTER_Y_OFFSET + PIE_RADIUS;
-    let content_top = if show_username {
-        subtitle_y + HEADER_GAP
-    } else {
-        let area_top = subtitle_y + HEADER_GAP;
-        let area_bottom = card_y1 - INNER_PADDING;
-        let spare = (area_bottom - area_top - content_block_height).max(0);
-        area_top + spare / 2
-    };
-    let pie_cx = card_x0 + PIE_CENTER_X_OFFSET;
-    let pie_cy = content_top + PIE_CENTER_Y_OFFSET;
+    let mut svg = String::with_capacity(ROBOTO_TTF.len() * 4 / 3 + 8192);
+    svg.push_str(&format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}">
+<defs>
+<style>
+@font-face {{
+  font-family: 'Roboto';
+  src: url('data:font/ttf;base64,{font_base64}') format('truetype');
+}}
+</style>
+</defs>
+<rect width="{WIDTH}" height="{HEIGHT}" fill="{bg}"/>
+<rect x="{card_x0}" y="{card_y0}" width="{card_width}" height="{card_height}" rx="{CARD_RADIUS}" ry="{CARD_RADIUS}" fill="{card}" stroke="{border}" stroke-width="1"/>
+"##,
+        bg = colors::background(),
+        card = colors::card(),
+        border = colors::card_border(),
+    ));
 
-    draw_pie_chart(&mut img, pie_cx, pie_cy, PIE_RADIUS, stats);
+    let mut header_bottom = card_y0 + INNER_PADDING;
 
+    if show_username {
+        let username_y = header_bottom + 34;
+        svg.push_str(&format!(
+            r#"<text x="{x}" y="{username_y}" font-family="Roboto" font-size="32" fill="{fill}">{text}</text>
+"#,
+            x = card_x0 + INNER_PADDING,
+            fill = colors::text_primary(),
+            text = escape_xml(&format!("@{username}")),
+        ));
+        header_bottom += 34 + HEADER_GAP;
+    }
+
+    let subtitle_y = header_bottom + 22;
+    svg.push_str(&format!(
+        r#"<text x="{x}" y="{subtitle_y}" font-family="Roboto" font-size="18" letter-spacing="0.3" fill="{fill}">Repository languages</text>
+"#,
+        x = card_x0 + INNER_PADDING,
+        fill = colors::text_muted(),
+    ));
+
+    let content_area_top = subtitle_y + 28;
+    let content_area_bottom = card_y1 - INNER_PADDING;
+    let content_area_height = content_area_bottom - content_area_top;
+
+    let bar_block_height = stats.len() as i32 * ROW_HEIGHT;
+    let pie_block_height = PIE_RADIUS * 2;
+    let content_block_height = pie_block_height.max(bar_block_height);
+    let content_top =
+        content_area_top + ((content_area_height - content_block_height).max(0) / 2);
+
+    let pie_cx = card_x0 + INNER_PADDING + PIE_RADIUS + 16;
+    let pie_cy = content_top + content_block_height / 2;
     let bars_x = card_x0 + BARS_X_OFFSET;
-    let bars_top = content_top + BARS_TOP_OFFSET;
+    let bars_top = content_top + (content_block_height - bar_block_height) / 2;
+    let divider_x = bars_x - 28;
+
+    svg.push_str(&format!(
+        r#"<line x1="{divider_x}" y1="{y0}" x2="{divider_x}" y2="{y1}" stroke="{stroke}" stroke-width="1"/>
+"#,
+        y0 = content_top + 8,
+        y1 = content_top + content_block_height - 8,
+        stroke = colors::divider(),
+    ));
+
+    svg.push_str(&donut_chart_svg(pie_cx, pie_cy, PIE_RADIUS, PIE_INNER_RADIUS, stats));
+
+    let bar_x = bars_x + LEGEND_WIDTH + 20;
+    let pct_x = card_x1 - INNER_PADDING;
+    let bar_area_width = pct_x - PCT_COLUMN_WIDTH - BAR_PCT_GAP - bar_x;
 
     for (i, stat) in stats.iter().enumerate() {
         let y = bars_top + (i as i32) * ROW_HEIGHT;
         let color = colors::language_color(&stat.name);
+        let row_center = y + ROW_HEIGHT / 2;
 
-        draw_text(
-            &mut img,
-            &font,
-            24.0,
-            bars_x as f32,
-            y as f32,
-            &stat.name,
-            colors::text_primary(),
-        );
+        svg.push_str(&format!(
+            r#"<rect x="{x}" y="{sy}" width="{SWATCH_SIZE}" height="{SWATCH_SIZE}" rx="3" fill="{color}"/>
+<text x="{nx}" y="{ny}" font-family="Roboto" font-size="20" fill="{text}">{name}</text>
+"#,
+            x = bars_x,
+            sy = row_center - SWATCH_SIZE / 2,
+            nx = bars_x + SWATCH_SIZE + 12,
+            ny = row_center + 7,
+            text = colors::text_primary(),
+            name = escape_xml(&stat.name),
+        ));
 
-        let bar_y = y + 30;
-        let bar_width = ((stat.percentage / 100.0) * BAR_MAX_WIDTH as f64).round() as u32;
-        draw_filled_rect_mut(
-            &mut img,
-            imageproc::rect::Rect::at(bars_x, bar_y).of_size(BAR_MAX_WIDTH as u32, 10),
-            Rgba([48, 54, 61, 255]),
-        );
+        let bar_y = row_center - BAR_HEIGHT / 2;
+        let bar_width =
+            ((stat.percentage / 100.0) * bar_area_width as f64).round().max(0.0) as i32;
+        svg.push_str(&format!(
+            r#"<rect x="{bar_x}" y="{bar_y}" width="{bar_area_width}" height="{BAR_HEIGHT}" rx="{BAR_RADIUS}" fill="{track}"/>
+"#,
+            track = colors::bar_track(),
+        ));
         if bar_width > 0 {
-            draw_filled_rect_mut(
-                &mut img,
-                imageproc::rect::Rect::at(bars_x, bar_y).of_size(bar_width, 10),
-                color,
-            );
+            svg.push_str(&format!(
+                r#"<rect x="{bar_x}" y="{bar_y}" width="{bar_width}" height="{BAR_HEIGHT}" rx="{BAR_RADIUS}" fill="{color}"/>
+"#,
+            ));
         }
 
-        let pct_label = format!("{:.0}%", stat.percentage);
-        draw_text(
-            &mut img,
-            &font,
-            22.0,
-            (bars_x + BAR_MAX_WIDTH + 16) as f32,
-            (bar_y - 4) as f32,
-            &pct_label,
-            colors::text_muted(),
-        );
+        let pct_label = format!("{:.1}%", stat.percentage);
+        svg.push_str(&format!(
+            r#"<text x="{pct_x}" y="{py}" font-family="Roboto" font-size="18" text-anchor="end" fill="{fill}">{pct}</text>
+"#,
+            py = row_center + 6,
+            fill = colors::text_muted(),
+            pct = escape_xml(&pct_label),
+        ));
     }
 
-    let mut buf = Cursor::new(Vec::new());
-    img.write_to(&mut buf, image::ImageFormat::Png)
-        .context("failed to encode PNG")?;
-    Ok(buf.into_inner())
+    svg.push_str("</svg>");
+    Ok(svg.into_bytes())
 }
 
-fn draw_pie_chart(img: &mut RgbaImage, cx: i32, cy: i32, radius: i32, stats: &[LanguageStat]) {
+fn donut_chart_svg(
+    cx: i32,
+    cy: i32,
+    outer: i32,
+    inner: i32,
+    stats: &[LanguageStat],
+) -> String {
+    let mut out = String::new();
     let mut start = -PI / 2.0;
+
     for stat in stats {
         let sweep = (stat.percentage as f32 / 100.0) * 2.0 * PI;
         if sweep <= 0.0 {
             continue;
         }
-        let end = start + sweep;
-        let color = colors::language_color(&stat.name);
-        fill_pie_slice(img, cx, cy, radius, start, end, color);
-        start = end;
+        let gap = SLICE_GAP.min(sweep / 4.0);
+        let slice_start = start + gap;
+        let slice_end = start + sweep - gap;
+        if slice_end > slice_start {
+            let color = colors::language_color(&stat.name);
+            let sweep = slice_end - slice_start;
+            if sweep >= 2.0 * PI - 0.02 {
+                out.push_str(&format!(
+                    r#"<circle cx="{cx}" cy="{cy}" r="{outer}" fill="{color}"/>
+<circle cx="{cx}" cy="{cy}" r="{inner}" fill="{card}"/>
+"#,
+                    card = colors::card(),
+                ));
+            } else {
+                out.push_str(&format!(
+                    r#"<path d="{path}" fill="{color}" stroke="{card}" stroke-width="2" stroke-linejoin="round"/>
+"#,
+                    path = donut_slice_path(cx, cy, outer, inner, slice_start, slice_end),
+                    card = colors::card(),
+                ));
+            }
+        }
+        start += sweep;
     }
+
+    out
 }
 
-fn fill_pie_slice(
-    img: &mut RgbaImage,
+fn donut_slice_path(
     cx: i32,
     cy: i32,
-    radius: i32,
+    outer: i32,
+    inner: i32,
     start: f32,
     end: f32,
-    color: Rgba<u8>,
-) {
-    let r2 = (radius * radius) as i32;
-    for dy in -radius..=radius {
-        for dx in -radius..=radius {
-            let dist2 = dx * dx + dy * dy;
-            if dist2 > r2 {
-                continue;
-            }
-            let angle = (dy as f32).atan2(dx as f32);
-            if angle_in_slice(angle, start, end) {
-                let x = cx + dx;
-                let y = cy + dy;
-                if x >= 0 && y >= 0 && x < img.width() as i32 && y < img.height() as i32 {
-                    img.put_pixel(x as u32, y as u32, color);
-                }
-            }
-        }
-    }
+) -> String {
+    let sweep = end - start;
+    let x1o = cx as f32 + outer as f32 * start.cos();
+    let y1o = cy as f32 + outer as f32 * start.sin();
+    let x2o = cx as f32 + outer as f32 * end.cos();
+    let y2o = cy as f32 + outer as f32 * end.sin();
+    let x1i = cx as f32 + inner as f32 * end.cos();
+    let y1i = cy as f32 + inner as f32 * end.sin();
+    let x2i = cx as f32 + inner as f32 * start.cos();
+    let y2i = cy as f32 + inner as f32 * start.sin();
+    let large_arc = if sweep > PI { 1 } else { 0 };
+
+    format!(
+        "M {x1o:.2} {y1o:.2} A {outer} {outer} 0 {large_arc} 1 {x2o:.2} {y2o:.2} L {x1i:.2} {y1i:.2} A {inner} {inner} 0 {large_arc} 0 {x2i:.2} {y2i:.2} Z",
+    )
 }
 
-fn angle_in_slice(angle: f32, start: f32, end: f32) -> bool {
-    let a = normalize_angle(angle);
-    let s = normalize_angle(start);
-    let e = normalize_angle(end);
-
-    if s <= e {
-        a >= s && a < e
-    } else {
-        a >= s || a < e
-    }
-}
-
-fn normalize_angle(mut angle: f32) -> f32 {
-    use std::f32::consts::TAU;
-    angle = angle % TAU;
-    if angle < 0.0 {
-        angle += TAU;
-    }
-    angle
-}
-
-fn fill_rounded_rect(
-    img: &mut RgbaImage,
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
-    radius: i32,
-    color: Rgba<u8>,
-) {
-    let width = (x1 - x0).max(0) as u32;
-    let height = (y1 - y0).max(0) as u32;
-    draw_filled_rect_mut(
-        img,
-        imageproc::rect::Rect::at(x0, y0).of_size(width, height),
-        color,
-    );
-
-    let bg = colors::background();
-    let r = radius;
-    let r2 = r * r;
-    let cx_tl = x0 + r;
-    let cy_tl = y0 + r;
-    let cx_tr = x1 - r;
-    let cy_tr = y0 + r;
-    let cx_bl = x0 + r;
-    let cy_bl = y1 - r;
-    let cx_br = x1 - r;
-    let cy_br = y1 - r;
-
-    for y in y0..y0 + r {
-        for x in x0..x0 + r {
-            let dx = x - cx_tl;
-            let dy = y - cy_tl;
-            if dx * dx + dy * dy > r2 {
-                img.put_pixel(x as u32, y as u32, bg);
-            }
-        }
-    }
-
-    for y in y0..y0 + r {
-        for x in x1 - r..x1 {
-            let dx = x - cx_tr;
-            let dy = y - cy_tr;
-            if dx * dx + dy * dy > r2 {
-                img.put_pixel(x as u32, y as u32, bg);
-            }
-        }
-    }
-
-    for y in y1 - r..y1 {
-        for x in x0..x0 + r {
-            let dx = x - cx_bl;
-            let dy = y - cy_bl;
-            if dx * dx + dy * dy > r2 {
-                img.put_pixel(x as u32, y as u32, bg);
-            }
-        }
-    }
-
-    for y in y1 - r..y1 {
-        for x in x1 - r..x1 {
-            let dx = x - cx_br;
-            let dy = y - cy_br;
-            if dx * dx + dy * dy > r2 {
-                img.put_pixel(x as u32, y as u32, bg);
-            }
-        }
-    }
-}
-
-fn draw_text(
-    img: &mut RgbaImage,
-    font: &FontRef<'_>,
-    size: f32,
-    x: f32,
-    y: f32,
-    text: &str,
-    color: Rgba<u8>,
-) {
-    draw_text_mut(
-        img,
-        color,
-        x.round() as i32,
-        y.round() as i32,
-        PxScale::from(size),
-        font,
-        text,
-    );
+fn escape_xml(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }

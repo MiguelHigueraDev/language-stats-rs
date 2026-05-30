@@ -9,7 +9,7 @@ use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
 pub struct CacheVariant {
-    pub image_png: Vec<u8>,
+    pub image_svg: Vec<u8>,
     #[allow(dead_code)]
     pub language_stats: Vec<LanguageStat>,
     pub etag: String,
@@ -74,12 +74,12 @@ impl AppCache {
 
         let filtered = apply_excludes(self.totals_for_scope(show_org)?, excludes)?;
         let stats = aggregate_top_six(filtered)?;
-        let image_png = chart::render_language_card(&self.username, &stats, show_username)?;
-        let etag = compute_etag(&image_png, self.last_updated, &key);
+        let image_svg = chart::render_language_card(&self.username, &stats, show_username)?;
+        let etag = compute_etag(&image_svg, self.last_updated, &key);
         self.variants.insert(
             key.clone(),
             CacheVariant {
-                image_png,
+                image_svg,
                 language_stats: stats,
                 etag,
             },
