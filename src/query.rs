@@ -1,4 +1,4 @@
-use crate::stats::deserialize_exclude_list;
+use crate::stats::{deserialize_exclude_list, deserialize_string_list};
 use axum::{
     extract::FromRequestParts,
     http::{request::Parts, StatusCode},
@@ -9,6 +9,12 @@ use serde::Deserialize;
 pub struct LanguagesQuery {
     #[serde(default, deserialize_with = "deserialize_exclude_list")]
     pub exclude: Vec<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_string_list",
+        rename = "excludedRepositories"
+    )]
+    pub excluded_repositories: Vec<String>,
     #[serde(default = "default_include_org", rename = "includeOrg")]
     pub include_org: bool,
     #[serde(default = "default_include_private", rename = "includePrivate")]

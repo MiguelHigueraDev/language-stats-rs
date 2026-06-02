@@ -1,6 +1,7 @@
 use crate::chart;
 use crate::models::LanguageStat;
-use crate::stats::{aggregate_top_six, apply_excludes, variant_cache_key};
+use crate::models::RepoContribution;
+use crate::stats::{aggregate_top_six, apply_excludes, build_language_totals, variant_cache_key};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::collections::{HashMap, VecDeque, hash_map::DefaultHasher};
@@ -27,28 +28,22 @@ pub struct CacheVariant {
 
 #[derive(Debug, Clone)]
 pub struct UserCache {
-    pub raw_totals: HashMap<String, u64>,
-    pub raw_totals_personal: HashMap<String, u64>,
-    pub raw_totals_public: HashMap<String, u64>,
-    pub raw_totals_personal_public: HashMap<String, u64>,
+    pub repo_contributions: Vec<RepoContribution>,
     pub last_updated: DateTime<Utc>,
     pub variants: HashMap<String, CacheVariant>,
 }
 
 impl UserCache {
     pub fn from_refresh(
-        totals: crate::models::LanguageTotals,
+        repo_contributions: Vec<RepoContribution>,
         last_updated: DateTime<Utc>,
     ) -> Result<Self> {
         let mut cache = Self {
-            raw_totals: totals.with_org,
-            raw_totals_personal: totals.personal_only,
-            raw_totals_public: totals.public_only,
-            raw_totals_personal_public: totals.personal_public_only,
+            repo_contributions,
             last_updated,
             variants: HashMap::new(),
         };
-        cache.render_variant("", &[], true, true, true, false)?;
+        cache.render_variant("", &[], &[], true, true, true, false)?;
         Ok(cache)
     }
 
@@ -57,26 +52,37 @@ impl UserCache {
             > chrono::Duration::from_std(CACHE_TTL).unwrap_or_else(|_| chrono::Duration::zero())
     }
 
-    fn totals_for_scope(&self, include_org: bool, include_private: bool) -> Result<HashMap<String, u64>> {
+    fn totals_for_scope(
+        &self,
+        excluded_repositories: &[String],
+        include_org: bool,
+        include_private: bool,
+    ) -> Result<HashMap<String, u64>> {
+        let totals = build_language_totals(&self.repo_contributions, excluded_repositories);
         match (include_org, include_private) {
-            (true, true) => Ok(self.raw_totals.clone()),
+            (true, true) => {
+                if totals.with_org.is_empty() {
+                    anyhow::bail!("no language data found after applying repository exclusions");
+                }
+                Ok(totals.with_org)
+            }
             (true, false) => {
-                if self.raw_totals_public.is_empty() {
+                if totals.public_only.is_empty() {
                     anyhow::bail!("no public repository language data found");
                 }
-                Ok(self.raw_totals_public.clone())
+                Ok(totals.public_only)
             }
             (false, true) => {
-                if self.raw_totals_personal.is_empty() {
+                if totals.personal_only.is_empty() {
                     anyhow::bail!("no personal repository language data found");
                 }
-                Ok(self.raw_totals_personal.clone())
+                Ok(totals.personal_only)
             }
             (false, false) => {
-                if self.raw_totals_personal_public.is_empty() {
+                if totals.personal_public_only.is_empty() {
                     anyhow::bail!("no public personal repository language data found");
                 }
-                Ok(self.raw_totals_personal_public.clone())
+                Ok(totals.personal_public_only)
             }
         }
     }
@@ -84,12 +90,20 @@ impl UserCache {
     pub fn get_variant(
         &self,
         excludes: &[String],
+        excluded_repositories: &[String],
         include_org: bool,
         include_private: bool,
         show_username: bool,
         minimal: bool,
     ) -> Option<&CacheVariant> {
-        let key = variant_cache_key(excludes, include_org, include_private, show_username, minimal);
+        let key = variant_cache_key(
+            excludes,
+            excluded_repositories,
+            include_org,
+            include_private,
+            show_username,
+            minimal,
+        );
         self.variants.get(&key)
     }
 
@@ -97,17 +111,28 @@ impl UserCache {
         &mut self,
         username: &str,
         excludes: &[String],
+        excluded_repositories: &[String],
         include_org: bool,
         include_private: bool,
         show_username: bool,
         minimal: bool,
     ) -> Result<&CacheVariant> {
-        let key = variant_cache_key(excludes, include_org, include_private, show_username, minimal);
+        let key = variant_cache_key(
+            excludes,
+            excluded_repositories,
+            include_org,
+            include_private,
+            show_username,
+            minimal,
+        );
         if self.variants.contains_key(&key) {
             return Ok(self.variants.get(&key).expect("variant just checked"));
         }
 
-        let filtered = apply_excludes(self.totals_for_scope(include_org, include_private)?, excludes)?;
+        let filtered = apply_excludes(
+            self.totals_for_scope(excluded_repositories, include_org, include_private)?,
+            excludes,
+        )?;
         let stats = aggregate_top_six(filtered)?;
         let image_svg = if minimal {
             chart::render_minimal_language_card(&stats)?
@@ -163,14 +188,21 @@ impl AppCache {
         &mut self,
         username: &str,
         excludes: &[String],
+        excluded_repositories: &[String],
         include_org: bool,
         include_private: bool,
         show_username: bool,
         minimal: bool,
     ) -> Result<CacheVariant> {
         let user_key = Self::cache_key(username);
-        let variant_key =
-            variant_cache_key(excludes, include_org, include_private, show_username, minimal);
+        let variant_key = variant_cache_key(
+            excludes,
+            excluded_repositories,
+            include_org,
+            include_private,
+            show_username,
+            minimal,
+        );
 
         {
             let user = self
@@ -185,6 +217,7 @@ impl AppCache {
             user.render_variant(
                 username,
                 excludes,
+                excluded_repositories,
                 include_org,
                 include_private,
                 show_username,
@@ -249,10 +282,7 @@ mod tests {
 
     fn sample_user(variant_keys: &[&str]) -> UserCache {
         UserCache {
-            raw_totals: HashMap::new(),
-            raw_totals_personal: HashMap::new(),
-            raw_totals_public: HashMap::new(),
-            raw_totals_personal_public: HashMap::new(),
+            repo_contributions: Vec::new(),
             last_updated: Utc::now(),
             variants: variant_keys
                 .iter()

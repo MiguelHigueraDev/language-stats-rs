@@ -64,10 +64,12 @@ async fn refresh_once(
     default_username: &str,
 ) -> Result<()> {
     let snapshot = build_user_cache(client, default_username).await?;
+    let totals = crate::stats::build_language_totals(&snapshot.repo_contributions, &[]);
     tracing::info!(
         user = %default_username,
-        languages = snapshot.raw_totals.len(),
-        personal_languages = snapshot.raw_totals_personal.len(),
+        repos = snapshot.repo_contributions.len(),
+        languages = totals.with_org.len(),
+        personal_languages = totals.personal_only.len(),
         cached_variants = snapshot.variants.len(),
         updated = %snapshot.last_updated,
         "cache refreshed successfully"
@@ -80,7 +82,7 @@ async fn refresh_once(
 }
 
 async fn build_user_cache(client: &GithubClient, username: &str) -> Result<UserCache> {
-    let totals = client.fetch_language_totals(username).await?;
+    let (_totals, contributions) = client.fetch_language_totals(username).await?;
     let last_updated = chrono::Utc::now();
-    UserCache::from_refresh(totals, last_updated)
+    UserCache::from_refresh(contributions, last_updated)
 }

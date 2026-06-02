@@ -1,6 +1,14 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
+#[derive(Debug, Clone)]
+pub struct RepoContribution {
+    pub name: String,
+    pub is_personal: bool,
+    pub is_public: bool,
+    pub languages: HashMap<String, u64>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LanguageTotals {
     pub with_org: HashMap<String, u64>,

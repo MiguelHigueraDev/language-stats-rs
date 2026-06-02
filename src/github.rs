@@ -1,5 +1,5 @@
-use crate::models::{GithubRepo, LanguageTotals};
-use crate::stats::{aggregate_top_six, language_stats_from_map};
+use crate::models::{GithubRepo, LanguageTotals, RepoContribution};
+use crate::stats::{aggregate_top_six, build_language_totals, language_stats_from_map};
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
 use serde_json::Value;
@@ -72,9 +72,16 @@ impl GithubClient {
         }
     }
 
-    pub async fn fetch_language_totals(&self, username: &str) -> Result<LanguageTotals> {
+    pub async fn fetch_language_totals(
+        &self,
+        username: &str,
+    ) -> Result<(LanguageTotals, Vec<RepoContribution>)> {
         let repos = self.fetch_repositories(username).await?;
-        let totals = self.aggregate_languages(username, &repos).await?;
+        let contributions = self.collect_repo_contributions(username, &repos).await?;
+        let totals = build_language_totals(&contributions, &[]);
+        if totals.with_org.is_empty() {
+            anyhow::bail!("no language data found for user {username}");
+        }
         let all_stats = language_stats_from_map(&totals.with_org);
         log_language_stats("all languages (with org)", &all_stats);
         let chart_stats = aggregate_top_six(totals.with_org.clone())?;
@@ -90,7 +97,7 @@ impl GithubClient {
             log_language_stats("all languages (public only)", &public_stats);
         }
 
-        Ok(totals)
+        Ok((totals, contributions))
     }
 
     async fn fetch_repositories(&self, username: &str) -> Result<Vec<GithubRepo>> {
@@ -156,16 +163,11 @@ impl GithubClient {
         Ok(all)
     }
 
-    async fn aggregate_languages(
+    async fn collect_repo_contributions(
         &self,
         username: &str,
         repos: &[GithubRepo],
-    ) -> Result<LanguageTotals> {
-        let mut with_org: HashMap<String, u64> = HashMap::new();
-        let mut personal_only: HashMap<String, u64> = HashMap::new();
-        let mut public_only: HashMap<String, u64> = HashMap::new();
-        let mut personal_public_only: HashMap<String, u64> = HashMap::new();
-
+    ) -> Result<Vec<RepoContribution>> {
         let results: Vec<_> = stream::iter(repos.iter().cloned())
             .map(|repo| async move {
                 let owner = repo.owner.login.clone();
@@ -174,7 +176,12 @@ impl GithubClient {
                 let is_public = !repo.private;
                 match self.fetch_repo_languages(&owner, &name).await {
                     Ok(map) if map.is_empty() => None,
-                    Ok(map) => Some((is_personal, is_public, map)),
+                    Ok(languages) => Some(RepoContribution {
+                        name,
+                        is_personal,
+                        is_public,
+                        languages,
+                    }),
                     Err(err) => {
                         tracing::warn!(
                             repo = %format!("{owner}/{name}"),
@@ -189,32 +196,7 @@ impl GithubClient {
             .collect()
             .await;
 
-        for item in results.into_iter().flatten() {
-            let (is_personal, is_public, languages) = item;
-            for (lang, bytes) in languages {
-                *with_org.entry(lang.clone()).or_default() += bytes;
-                if is_personal {
-                    *personal_only.entry(lang.clone()).or_default() += bytes;
-                }
-                if is_public {
-                    *public_only.entry(lang.clone()).or_default() += bytes;
-                    if is_personal {
-                        *personal_public_only.entry(lang).or_default() += bytes;
-                    }
-                }
-            }
-        }
-
-        if with_org.is_empty() {
-            anyhow::bail!("no language data found for user {username}");
-        }
-
-        Ok(LanguageTotals {
-            with_org,
-            personal_only,
-            public_only,
-            personal_public_only,
-        })
+        Ok(results.into_iter().flatten().collect())
     }
 
     async fn fetch_repo_languages(&self, owner: &str, repo: &str) -> Result<HashMap<String, u64>> {

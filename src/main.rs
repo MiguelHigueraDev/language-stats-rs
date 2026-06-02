@@ -10,7 +10,7 @@ mod stats;
 use crate::cache::{CacheVariant, SharedCache};
 use crate::github::GithubClient;
 use crate::query::LanguagesQuery;
-use crate::stats::parse_excludes_from_params;
+use crate::stats::{parse_excluded_repositories_from_params, parse_excludes_from_params};
 use anyhow::{Context, Result};
 use axum::{
     Router,
@@ -103,11 +103,14 @@ async fn get_languages(
     }
 
     let excludes = parse_excludes_from_params(&query.exclude);
+    let excluded_repositories =
+        parse_excluded_repositories_from_params(&query.excluded_repositories);
 
     let variant = match resolve_variant(
         &state.cache,
         username,
         &excludes,
+        &excluded_repositories,
         query.include_org,
         query.include_private,
         query.show_username,
@@ -119,6 +122,7 @@ async fn get_languages(
                 error = %err,
                 user = %username,
                 exclude = ?excludes,
+                excluded_repositories = ?excluded_repositories,
                 include_org = query.include_org,
                 include_private = query.include_private,
                 show_username = query.show_username,
@@ -169,6 +173,7 @@ fn resolve_variant(
     cache: &SharedCache,
     username: &str,
     excludes: &[String],
+    excluded_repositories: &[String],
     include_org: bool,
     include_private: bool,
     show_username: bool,
@@ -178,6 +183,7 @@ fn resolve_variant(
         if let Some(user_cache) = guard.get_user(username) {
             if let Some(variant) = user_cache.get_variant(
                 excludes,
+                excluded_repositories,
                 include_org,
                 include_private,
                 show_username,
@@ -195,6 +201,7 @@ fn resolve_variant(
     if let Some(variant) = guard.get_user(username).and_then(|user_cache| {
         user_cache.get_variant(
             excludes,
+            excluded_repositories,
             include_org,
             include_private,
             show_username,
@@ -207,6 +214,7 @@ fn resolve_variant(
     Ok(guard.render_user_variant(
         username,
         excludes,
+        excluded_repositories,
         include_org,
         include_private,
         show_username,
