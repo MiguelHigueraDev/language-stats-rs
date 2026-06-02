@@ -1,4 +1,4 @@
-use crate::models::LanguageStat;
+use crate::models::{LanguageStat, LanguageTotals, RepoContribution};
 use anyhow::Result;
 use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use std::collections::HashMap;
@@ -79,17 +79,14 @@ pub fn parse_excludes_from_params(params: &[String]) -> Vec<String> {
     excludes
 }
 
-/// Accept `exclude` as either a single value or repeated query params.
-///
-/// `?exclude=Python` and `?exclude=Python&exclude=TypeScript` both deserialize
-/// into a `Vec<String>`.
-pub fn deserialize_exclude_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+/// Accept a query param as either a single value or repeated params.
+pub fn deserialize_string_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    struct ExcludeListVisitor;
+    struct StringListVisitor;
 
-    impl<'de> Visitor<'de> for ExcludeListVisitor {
+    impl<'de> Visitor<'de> for StringListVisitor {
         type Value = Vec<String>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -115,7 +112,98 @@ where
         }
     }
 
-    deserializer.deserialize_any(ExcludeListVisitor)
+    deserializer.deserialize_any(StringListVisitor)
+}
+
+/// Accept `exclude` as either a single value or repeated query params.
+///
+/// `?exclude=Python` and `?exclude=Python&exclude=TypeScript` both deserialize
+/// into a `Vec<String>`.
+pub fn deserialize_exclude_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_string_list(deserializer)
+}
+
+fn normalize_repo_name(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+fn personal_repo_is_excluded(repo_name: &str, excluded: &[String]) -> bool {
+    let normalized = normalize_repo_name(repo_name);
+    excluded
+        .iter()
+        .any(|exclude| normalize_repo_name(exclude) == normalized)
+}
+
+pub fn parse_excluded_repositories(value: Option<&str>) -> Vec<String> {
+    value
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Merge repository names from one or more query parameters.
+pub fn parse_excluded_repositories_from_params(params: &[String]) -> Vec<String> {
+    let mut excluded: Vec<String> = params
+        .iter()
+        .flat_map(|value| parse_excluded_repositories(Some(value.as_str())))
+        .collect();
+    excluded.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    excluded.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    excluded
+}
+
+pub fn excluded_repositories_cache_key(excluded: &[String]) -> String {
+    let mut names: Vec<String> = excluded
+        .iter()
+        .map(|name| normalize_repo_name(name))
+        .filter(|name| !name.is_empty())
+        .collect();
+    names.sort();
+    names.join(",")
+}
+
+pub fn build_language_totals(
+    contributions: &[RepoContribution],
+    excluded_repositories: &[String],
+) -> LanguageTotals {
+    let mut with_org: HashMap<String, u64> = HashMap::new();
+    let mut personal_only: HashMap<String, u64> = HashMap::new();
+    let mut public_only: HashMap<String, u64> = HashMap::new();
+    let mut personal_public_only: HashMap<String, u64> = HashMap::new();
+
+    for repo in contributions {
+        if repo.is_personal && personal_repo_is_excluded(&repo.name, excluded_repositories) {
+            continue;
+        }
+
+        for (lang, bytes) in &repo.languages {
+            *with_org.entry(lang.clone()).or_default() += bytes;
+            if repo.is_personal {
+                *personal_only.entry(lang.clone()).or_default() += bytes;
+            }
+            if repo.is_public {
+                *public_only.entry(lang.clone()).or_default() += bytes;
+                if repo.is_personal {
+                    *personal_public_only.entry(lang.clone()).or_default() += bytes;
+                }
+            }
+        }
+    }
+
+    LanguageTotals {
+        with_org,
+        personal_only,
+        public_only,
+        personal_public_only,
+    }
 }
 
 pub fn exclude_cache_key(excludes: &[String]) -> String {
@@ -130,14 +218,16 @@ pub fn exclude_cache_key(excludes: &[String]) -> String {
 
 pub fn variant_cache_key(
     excludes: &[String],
+    excluded_repositories: &[String],
     include_org: bool,
     include_private: bool,
     show_username: bool,
     minimal: bool,
 ) -> String {
     format!(
-        "{}|includeOrg={include_org}|includePrivate={include_private}|showUsername={show_username}|minimal={minimal}",
-        exclude_cache_key(excludes)
+        "{}|excludedRepositories={}|includeOrg={include_org}|includePrivate={include_private}|showUsername={show_username}|minimal={minimal}",
+        exclude_cache_key(excludes),
+        excluded_repositories_cache_key(excluded_repositories)
     )
 }
 
@@ -323,6 +413,61 @@ mod tests {
         assert!(!stats.iter().any(|s| s.name == "G" || s.name == "H"));
         let pct_sum: f64 = stats.iter().map(|s| s.percentage).sum();
         assert!((pct_sum - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_excluded_repositories_splits_and_dedupes() {
+        assert_eq!(
+            parse_excluded_repositories(Some(" dotfiles , ,notes ")),
+            vec!["dotfiles", "notes"]
+        );
+        assert_eq!(
+            parse_excluded_repositories_from_params(&["alpha,beta".into(), "Beta".into()]),
+            vec!["alpha", "beta"]
+        );
+    }
+
+    #[test]
+    fn build_language_totals_omits_excluded_personal_repos() {
+        let contributions = vec![
+            RepoContribution {
+                name: "keep".into(),
+                is_personal: true,
+                is_public: true,
+                languages: HashMap::from([("Rust".into(), 100)]),
+            },
+            RepoContribution {
+                name: "skip-me".into(),
+                is_personal: true,
+                is_public: true,
+                languages: HashMap::from([("JavaScript".into(), 200)]),
+            },
+            RepoContribution {
+                name: "org-repo".into(),
+                is_personal: false,
+                is_public: true,
+                languages: HashMap::from([("Go".into(), 50)]),
+            },
+        ];
+
+        let totals = build_language_totals(&contributions, &["skip-me".into()]);
+        assert_eq!(totals.with_org.get("Rust"), Some(&100));
+        assert_eq!(totals.with_org.get("Go"), Some(&50));
+        assert!(!totals.with_org.contains_key("JavaScript"));
+        assert_eq!(totals.personal_only.get("Rust"), Some(&100));
+        assert!(!totals.personal_only.contains_key("JavaScript"));
+    }
+
+    #[test]
+    fn build_language_totals_excludes_are_case_insensitive() {
+        let contributions = vec![RepoContribution {
+            name: "Dotfiles".into(),
+            is_personal: true,
+            is_public: true,
+            languages: HashMap::from([("Shell".into(), 10)]),
+        }];
+        let totals = build_language_totals(&contributions, &["dotfiles".into()]);
+        assert!(totals.with_org.is_empty());
     }
 
     #[test]

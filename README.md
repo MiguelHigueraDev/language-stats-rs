@@ -43,6 +43,7 @@ All options apply to `GET /languages`:
 |-----------|---------|-------------|
 | `username` | `GITHUB_USERNAME` | GitHub user whose repository languages are visualized. When this differs from `GITHUB_USERNAME`, or when no `GITHUB_TOKEN` is configured, only public repositories are included. |
 | `exclude` | _(none)_ | Languages to omit from the chart. Comma-separated in one param, or repeated params. Matching is case-insensitive. |
+| `excludedRepositories` | _(none)_ | Personal repositories to omit from the stats. Comma-separated in one param, or repeated params. Matching is case-insensitive on repository name only (org repos are never excluded). |
 | `includeOrg` | `true` | When `true`, include organization repositories. When `false`, use personal repositories only. |
 | `includePrivate` | `true` | When `true`, include private repositories (requires `GITHUB_TOKEN` and `username` matching `GITHUB_USERNAME`). When `false`, use public repositories only. |
 | `showUsername` | `true` | When `true`, show `@username` in the full chart header. Ignored when `minimal=true`. |
@@ -62,6 +63,16 @@ curl 'http://localhost:3000/languages?exclude=C%2B%2B&exclude=C%23' --output lan
 
 # Multi-word language names
 curl 'http://localhost:3000/languages?exclude=Jupyter%20Notebook' --output languages.svg
+```
+
+**Excluded repositories examples**
+
+```bash
+# Comma-separated list (personal repos only)
+curl 'http://localhost:3000/languages?excludedRepositories=dotfiles,old-notes' --output languages.svg
+
+# Repeated params
+curl 'http://localhost:3000/languages?excludedRepositories=dotfiles&excludedRepositories=archived-playground' --output languages.svg
 ```
 
 **Chart layout examples**
