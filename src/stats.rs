@@ -79,45 +79,6 @@ pub fn parse_excludes_from_params(params: &[String]) -> Vec<String> {
     excludes
 }
 
-/// Accept `exclude` as either a single value or repeated query params.
-///
-/// `?exclude=Python` and `?exclude=Python&exclude=TypeScript` both deserialize
-/// into a `Vec<String>`.
-pub fn deserialize_exclude_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct ExcludeListVisitor;
-
-    impl<'de> Visitor<'de> for ExcludeListVisitor {
-        type Value = Vec<String>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a string or a sequence of strings")
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(vec![value.to_string()])
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut values = Vec::new();
-            while let Some(value) = seq.next_element::<String>()? {
-                values.push(value);
-            }
-            Ok(values)
-        }
-    }
-
-    deserializer.deserialize_any(ExcludeListVisitor)
-}
-
 /// Accept a query param as either a single value or repeated params.
 pub fn deserialize_string_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
@@ -152,6 +113,17 @@ where
     }
 
     deserializer.deserialize_any(StringListVisitor)
+}
+
+/// Accept `exclude` as either a single value or repeated query params.
+///
+/// `?exclude=Python` and `?exclude=Python&exclude=TypeScript` both deserialize
+/// into a `Vec<String>`.
+pub fn deserialize_exclude_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_string_list(deserializer)
 }
 
 fn normalize_repo_name(name: &str) -> String {
